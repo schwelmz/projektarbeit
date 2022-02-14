@@ -488,7 +488,7 @@ if __name__ == '__main__':
 
 
     #Av = f -> Lösung ausrechnen 10 Schritte CG-Verfahren -> v_h
-    for max_it in [10, 100, 500]:
+    for max_it in [10, 100, 200]:
         print("Für maximal ", max_it, " Iterationen:")
         A = make_laplace(Nx, hxs,  bounds='dirichlet')
         A[0,0] = 1
