@@ -488,7 +488,7 @@ if __name__ == '__main__':
 
 
     #Av = f -> Lösung ausrechnen 10 Schritte CG-Verfahren -> v_h
-    for max_it in [100]:
+    for max_it in [10, 100, 500]:
         print("Für maximal ", max_it, " Iterationen:")
         A = make_laplace(Nx, hxs,  bounds='dirichlet')
         A[0,0] = 1
@@ -503,7 +503,7 @@ if __name__ == '__main__':
         f[Nx-2] += f[Nx-1]
         print('  '+arr2str(A.todense(), prefix='  '))
         print(f)
-
+        
         #Gleichungssystem lösen
         v_h = sparse.linalg.cg(A , f ,x0 = np.zeros(f.shape), maxiter = max_it)[0]      #Av=f  --CG-->  v_h
 
