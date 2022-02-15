@@ -436,87 +436,102 @@ if __name__ == '__main__':
     #print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
 
 #############################################################################################################
-    def first_order_coefficients(i, u, x):
-        a = (u[i]*x[i-1]-u[i-1]*x[i])/(x[i-1]-x[i])
-        b = (u[i-1]-u[i])/(x[i-1]-x[i])
-        return [a, b]
-
-    def second_order_coefficients(i, u, xs):
-        xi = [xs[i-1], xs[i], xs[i+1]]
-        ui = [u[i-1], u[i], u[i+1]]
+    def second_order_coefficients(i, ui, xi):
         a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-        b = ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1]))
+        b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
         c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
         return [a,b,c]
 
-    def sprungterm(u, j, hxs):
-        abl_T1 = (u[j]-u[j-1])/hxs[j-1]
-        abl_T2 = (u[j+1]-u[j])/hxs[j]
-        return abl_T1 - abl_T2
+    def first_order_coefficients(i, u, x):
+        a = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
+        b = (u[0]-u[1])/(x[0]-x[1])
+        return [a, b]
+    
+    def abl(x1, x2, v1, v2):
+        return (v2-v1)/(x2-x1)
     
     #Matrix A und rechte Seite f
-    def make_matrix_A(Nx):
-        A = make_laplace(Nx, bounds='dirichlet')
-        A[1,0] = A[0,1]
-        A[Nx-2, Nx-1] = A[Nx-1, Nx-2]
+    def make_matrix_A(Nx, hxs):
+        A = make_laplace(Nx, hxs, bounds='dirichlet')
+        A[0,0] = 1
+        A[Nx-1, Nx-1] = 1
+        for i in range(0, Nx):
+            A[1,i] = A[1,i] - A[0,i]*A[1,0]
+            A[Nx-2, i] = A[Nx-2, i] - A[Nx-1, i]*A[Nx-2,Nx-1]
         return A
 
     #Fehlerabschätzung
-    def discret_error(z, f, x, hx):
-        NT = hx.shape[0]
+    def discretization_error(xs, zs, f, Nx):
         error = 0
-        for j in range(0, NT):
-            [a1, b1] = first_order_coefficients(j, z, x)
-            [a2, b2, c2] = second_order_coefficients(j, z, x)
-            term1 = f[j]*((a2-a1)*(x[j]-x[j-1]) + 1/2*(b2-b1)*(x[j]**2-x[j-1]**2) + 1/3*c2*(x[j]**3-x[j-1]**3))
-            error += abs(term1)
+        j = 1
+        while j < Nx-1:
+            #linkes 1st order polynom bilden
+            x = [xs[j-1], xs[j]]
+            z = [zs[j-1], zs[j]]
+            [a1,b1] = first_order_coefficients(j,z,x)
+            #rechtes 1st order polynom bilden
+            x = [xs[j], xs[j+1]]
+            z = [zs[j], zs[j+1]]
+            [a2,b2] = first_order_coefficients(j,z,x)
+            #2nd order polynom bilden
+            x = [xs[j-1], xs[j], xs[j+1]]
+            z = [zs[j-1], zs[j], zs[j+1]]
+            [a,b,c] = second_order_coefficients(j, z, x)
+            #linke Seite
+            error_l = f*((a-a1)*(x[1]-x[0]) + 1/2*(b-b1)*(x[1]**2-x[0]**2) + 1/3*c*(x[1]**3-x[0]**3))
+            #rechte Seite
+            error_r = f*((a-a2)*(x[2]-x[1]) + 1/2*(b-b2)*(x[2]**2-x[1]**2) + 1/3*c*(x[2]**3-x[1]**3))
+            #2 Schritte zusammenfügen
+            error += abs(error_l) + abs(error_r)
+            j += 2
         return error
 
-    def iteration_error(u, z, x, hx):
-        NT = hx.shape[0]
+    def iteration_error(xs, zs, vs, f, Nx):
         error = 0
-        for j in range(1, NT):
-            #Element-Residuum:
-            [a, b] = first_order_coefficients(j, z, x)
-            term1 = f[j] * (a*(x[j]-x[j-1])+1/2*b*(x[j]**2-x[j-1]**2))
-            #Kanten-Residuum:
-            R_e_links = sprungterm(u, j-1, hxs)
-            R_e_rechts = sprungterm(u, j, hxs)
-            term2 = 1/2 * (R_e_links * z[j-1] + R_e_rechts * z[j])
-            error += abs(term1 + term2)
+        for j in range(1, Nx):
+            #erster Term
+            x = [xs[j-1], xs[j]]
+            z = [zs[j-1], zs[j]]
+            [a1,b1] = first_order_coefficients(j,z,x)
+            term1 = f * (a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2))
+            #zweiter Term
+            v = [vs[j-1], vs[j]]
+            abl_links = abl(x[0],x[1],v[0],v[1])
+            abl_rechts = abl(x[0],x[1],v[0],v[1])
+            term2 = -abl_rechts*z[1]+abl_links*z[0]
+            error += abs(term1+term2)
         return error
 
+    for max_it in [10, 100, 1000]:
+        #Anfangswerte
+        a = 0
+        b = 0
 
-    #Av = f -> Lösung ausrechnen 10 Schritte CG-Verfahren -> v_h
-    for max_it in [10, 100, 200]:
-        print("Für maximal ", max_it, " Iterationen:")
-        A = make_laplace(Nx, hxs,  bounds='dirichlet')
-        A[0,0] = 1
-        A[Nx-1, Nx-1] = 1
+        #Matrix A erstellen
+        A = make_matrix_A(Nx, hxs)
+
+        #rechte Seite f erstellen
         f = np.ones(A.shape[1])
-
-        #Elimination der ersten und letzten Zeile:
-        for i in range(0, Nx):
-            A[1,i] = A[1,i] + A[0,i]
-            A[Nx-2, i] = A[Nx-2, i] + A[Nx-1, i]
+        f[0] = a
+        f[Nx-1] = b
         f[1] += f[0]
         f[Nx-2] += f[Nx-1]
-        print('  '+arr2str(A.todense(), prefix='  '))
-        print(f)
         
         #Gleichungssystem lösen
         v_h = sparse.linalg.cg(A , f ,x0 = np.zeros(f.shape), maxiter = max_it)[0]      #Av=f  --CG-->  v_h
 
         #duales Problem lösen
         J = np.ones(A.shape[1])
+        J[0] = 0
+        J[-1] = 0
         z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
 
         #Diskretisierungsfehler
-        eta_h = discret_error(z_h, f, xs, hxs)
+        eta_h = discretization_error(xs, z_h, f[2], Nx)
         print("     eta_h", eta_h)
 
         #Iterationsfehler
-        eta_m = iteration_error(v_h, z_h, xs, hxs)
+        eta_m = iteration_error(xs, z_h, v_h, f[2], Nx)
         print("     eta_m", eta_m)
 
         #Gesamtfehler E = eta_h + eta_m = discretization error + iteration error
