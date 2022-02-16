@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
+import matplotlib.pyplot as plt
 from functools import lru_cache
 
 ########################
@@ -449,6 +450,11 @@ if __name__ == '__main__':
     
     def abl(x1, x2, v1, v2):
         return (v2-v1)/(x2-x1)
+
+    def calc_sprungterme(j, v, x):
+        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
+        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
+        return [sprung_links, sprung_rechts]
     
     #Matrix A und rechte Seite f
     def make_matrix_A(Nx, hxs):
@@ -488,21 +494,25 @@ if __name__ == '__main__':
 
     def iteration_error(xs, zs, vs, f, Nx):
         error = 0
+        v_alt = [0,0]
+        x_alt = [0,1]
         for j in range(1, Nx):
             #erster Term
             x = [xs[j-1], xs[j]]
             z = [zs[j-1], zs[j]]
             [a1,b1] = first_order_coefficients(j,z,x)
             term1 = f * (a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2))
-            #zweiter Term
+            #zweiter term
             v = [vs[j-1], vs[j]]
-            abl_links = abl(x[0],x[1],v[0],v[1])
-            abl_rechts = abl(x[0],x[1],v[0],v[1])
+            abl_links = (v_alt[1]-v_alt[0])/(x_alt[1]-x_alt[0])
+            abl_rechts = (v[1]-v[0])/(x[1]-x[0])
             term2 = -abl_rechts*z[1]+abl_links*z[0]
-            error += abs(term1+term2)
+            v_alt = v
+            x_alt = x
+            error += term1+term2
         return error
 
-    for max_it in [10, 100, 1000]:
+    for max_it in [1500]:
         #Anfangswerte
         a = 0
         b = 0
@@ -526,6 +536,7 @@ if __name__ == '__main__':
         J[-1] = 0
         z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
 
+        print('Für maximal ', max_it, ' Iterationen:')
         #Diskretisierungsfehler
         eta_h = discretization_error(xs, z_h, f[2], Nx)
         print("     eta_h", eta_h)
