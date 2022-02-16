@@ -452,8 +452,15 @@ if __name__ == '__main__':
         return (v2-v1)/(x2-x1)
 
     def calc_sprungterme(j, v, x):
-        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
-        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
+        if(j == 1):
+            sprung_links = 0
+            sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
+        if(j == Nx-1):
+            sprung_rechts = 0
+            sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
+        if(j>1 and j< Nx-1):
+            sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
+            sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
         return [sprung_links, sprung_rechts]
     
     #Matrix A und rechte Seite f
@@ -494,25 +501,22 @@ if __name__ == '__main__':
 
     def iteration_error(xs, zs, vs, f, Nx):
         error = 0
-        v_alt = [0,0]
-        x_alt = [0,1]
         for j in range(1, Nx):
             #erster Term
             x = [xs[j-1], xs[j]]
             z = [zs[j-1], zs[j]]
             [a1,b1] = first_order_coefficients(j,z,x)
             term1 = f * (a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2))
+            print(j, 'term1: ',term1)
             #zweiter term
-            v = [vs[j-1], vs[j]]
-            abl_links = (v_alt[1]-v_alt[0])/(x_alt[1]-x_alt[0])
-            abl_rechts = (v[1]-v[0])/(x[1]-x[0])
-            term2 = -abl_rechts*z[1]+abl_links*z[0]
-            v_alt = v
-            x_alt = x
-            error += term1+term2
+            [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs)
+            term2 = 1/2 * (sprung_l * z[0] + sprung_r * z[1])
+            print(j, 'term2: ',term2)
+            print('')
+            error += abs(term1+term2)
         return error
 
-    for max_it in [1500]:
+    for max_it in [3000]:
         #Anfangswerte
         a = 0
         b = 0
