@@ -401,6 +401,7 @@ if __name__ == '__main__':
     Nx = xs.shape[0]
     print(f"  length: {xs[-1]:>5.2f}cm")
     print(f"  nodes:  {Nx:>4}")
+    print("Intervall-Länge h:",hxs)
     print(f"Initial values:")
     print(f"  V: {np.min(Vmhn0[:,0]):>+.2e} -- {np.max(Vmhn0[:,0]):>+.2e}")
     print(f"  m: {np.min(Vmhn0[:,1]):>+.2e} -- {np.max(Vmhn0[:,1]):>+.2e}")
@@ -451,7 +452,7 @@ if __name__ == '__main__':
     def abl(x1, x2, v1, v2):
         return (v2-v1)/(x2-x1)
 
-    def calc_sprungterme(j, v, x):
+    def calc_sprungterme(j, v, x, Nx):
         if(j == 1):
             sprung_links = 0
             sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
@@ -461,9 +462,9 @@ if __name__ == '__main__':
         if(j>1 and j< Nx-1):
             sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
             sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
-        return [sprung_links, sprung_rechts]
+        return [-sprung_links, -sprung_rechts]
     
-    #Matrix A und rechte Seite f
+    #Matrix A erstellen
     def make_matrix_A(Nx, hxs):
         A = make_laplace(Nx, hxs, bounds='dirichlet')
         A[0,0] = 1
@@ -472,6 +473,18 @@ if __name__ == '__main__':
             A[1,i] = A[1,i] - A[0,i]*A[1,0]
             A[Nx-2, i] = A[Nx-2, i] - A[Nx-1, i]*A[Nx-2,Nx-1]
         return A
+
+    #Rechte Seite erstellen
+    def make_rhs(a,b,Nx,hxs):
+        f = np.ones(Nx)
+        rhs = np.zeros(Nx)
+        for i in range(1,Nx-1):
+            rhs[i] = f[i]*(1/2*hxs[i-1]+1/2*hxs[i])
+        rhs[0] = a
+        rhs[Nx-1] = b
+        rhs[1] += rhs[0]
+        rhs[Nx-2] += rhs[Nx-1]
+        return rhs
 
     #Fehlerabschätzung
     def discretization_error(xs, zs, f, Nx):
@@ -499,24 +512,25 @@ if __name__ == '__main__':
             j += 2
         return error
 
-    def iteration_error(xs, zs, vs, f, Nx):
+    def iteration_error(xs, zs, vs, Nx):
         error = 0
         for j in range(1, Nx):
             #erster Term
             x = [xs[j-1], xs[j]]
             z = [zs[j-1], zs[j]]
             [a1,b1] = first_order_coefficients(j,z,x)
-            term1 = f * (a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2))
-            print(j, 'term1: ',term1)
+            term1 = a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2)
             #zweiter term
-            [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs)
+            [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs,Nx)
             term2 = 1/2 * (sprung_l * z[0] + sprung_r * z[1])
-            print(j, 'term2: ',term2)
-            print('')
             error += abs(term1+term2)
         return error
-
-    for max_it in [3000]:
+    
+    iter_error = []
+    discret_error = []
+    combined_error = []
+    iterations = [200,400,600,800,1000,1200,1400] 
+    for max_it in iterations:
         #Anfangswerte
         a = 0
         b = 0
@@ -525,28 +539,27 @@ if __name__ == '__main__':
         A = make_matrix_A(Nx, hxs)
 
         #rechte Seite f erstellen
-        f = np.ones(A.shape[1])
-        f[0] = a
-        f[Nx-1] = b
-        f[1] += f[0]
-        f[Nx-2] += f[Nx-1]
+        rhs = make_rhs(a,b,Nx,hxs)
+        print('rhs = ',rhs)
         
         #Gleichungssystem lösen
-        v_h = sparse.linalg.cg(A , f ,x0 = np.zeros(f.shape), maxiter = max_it)[0]      #Av=f  --CG-->  v_h
+        v_h = sparse.linalg.cg(A , rhs ,x0 = np.zeros(rhs.shape), tol=0, atol=0, maxiter = max_it)[0]      #Av=f  --CG-->  v_h
+        print('v_h = ',v_h)
 
         #duales Problem lösen
         J = np.ones(A.shape[1])
         J[0] = 0
         J[-1] = 0
         z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+        print('z_h = ',z_h)
 
         print('Für maximal ', max_it, ' Iterationen:')
         #Diskretisierungsfehler
-        eta_h = discretization_error(xs, z_h, f[2], Nx)
+        eta_h = discretization_error(xs, z_h, 1, Nx)
         print("     eta_h", eta_h)
 
         #Iterationsfehler
-        eta_m = iteration_error(xs, z_h, v_h, f[2], Nx)
+        eta_m = iteration_error(xs, z_h, v_h, Nx)
         print("     eta_m", eta_m)
 
         #Gesamtfehler E = eta_h + eta_m = discretization error + iteration error
@@ -554,6 +567,17 @@ if __name__ == '__main__':
         print("     Gesamttfehler", error)
         print(" ")
 
+        iter_error.append(eta_m)
+        discret_error.append(eta_h)
+
+    #plot
+    iter_error = np.array(iter_error)
+    discret_error = np.array(discret_error)
+    plt.plot(iterations, iter_error, label = 'iteration error')
+    plt.plot(iterations, discret_error, label = 'discretization error')
+    plt.yscale('log')
+    plt.legend()
+    plt.show()
 #############################################################################################################
 
     # system matrices for crank_nicolson
