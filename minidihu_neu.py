@@ -527,10 +527,13 @@ if __name__ == '__main__':
         return error
     
     iter_error = []
+    iter_error_exact = []
     discret_error = []
-    combined_error = []
-    iterations = [200,400,600,800,1000,1200,1400] 
-    for max_it in iterations:
+    iterations = []
+    max_it = 100
+    eta_h = 0
+    eta_m = 1
+    while(eta_h < eta_m):
         #Anfangswerte
         a = 0
         b = 0
@@ -540,41 +543,50 @@ if __name__ == '__main__':
 
         #rechte Seite f erstellen
         rhs = make_rhs(a,b,Nx,hxs)
-        print('rhs = ',rhs)
         
         #Gleichungssystem lösen
         v_h = sparse.linalg.cg(A , rhs ,x0 = np.zeros(rhs.shape), tol=0, atol=0, maxiter = max_it)[0]      #Av=f  --CG-->  v_h
-        print('v_h = ',v_h)
+
+        #exacte Lösung bestimmen
+        v_h_exact = sparse.linalg.cg(A , rhs ,x0 = np.zeros(rhs.shape), tol=0, atol=0)[0]
+        eta_m_exact = 0
+        for i in range(0, Nx):
+            eta_m_exact += abs(v_h[i] - v_h_exact[i])
 
         #duales Problem lösen
         J = np.ones(A.shape[1])
         J[0] = 0
         J[-1] = 0
         z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-        print('z_h = ',z_h)
 
         print('Für maximal ', max_it, ' Iterationen:')
         #Diskretisierungsfehler
         eta_h = discretization_error(xs, z_h, 1, Nx)
-        print("     eta_h", eta_h)
+        print("     discretization error", eta_h)
 
         #Iterationsfehler
         eta_m = iteration_error(xs, z_h, v_h, Nx)
-        print("     eta_m", eta_m)
+        print("     iteration error", eta_m)
+        print('     exact iteration error: ', eta_m_exact)
 
         #Gesamtfehler E = eta_h + eta_m = discretization error + iteration error
         error = eta_h + eta_m
         print("     Gesamttfehler", error)
         print(" ")
 
+        iterations.append(max_it)
         iter_error.append(eta_m)
+        iter_error_exact.append(eta_m_exact)
         discret_error.append(eta_h)
+        max_it += 100
 
     #plot
     iter_error = np.array(iter_error)
     discret_error = np.array(discret_error)
-    plt.plot(iterations, iter_error, label = 'iteration error')
-    plt.plot(iterations, discret_error, label = 'discretization error')
+    plt.plot(iterations, iter_error, label = 'extimated iteration error')
+    plt.plot(iterations, iter_error_exact, label = 'exact iteration error')
+    plt.plot(iterations, discret_error, label = 'estimated discretization error')
+    plt.xlabel('iterations')
     plt.yscale('log')
     plt.legend()
     plt.show()
