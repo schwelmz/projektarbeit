@@ -229,6 +229,102 @@ Am = 500.0              # surface area to volume ratio [cm^-1]
 Cm = 0.58               # membrane capacitance [uF/cm^2]
 
 #######################
+# error analysis
+#######################
+def second_order_coefficients(i, ui, xi):
+    a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
+    b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
+    c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
+    return [a,b,c]
+
+def first_order_coefficients(i, u, x):
+    a = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
+    b = (u[0]-u[1])/(x[0]-x[1])
+    return [a, b]
+
+#Sprungterme berechnen
+def abl(x1, x2, v1, v2):
+    return (v2-v1)/(x2-x1)
+
+def calc_sprungterme(j, v, x, Nx):
+    if(j == 1):
+        sprung_links = 0
+        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
+    if(j == Nx-1):
+        sprung_rechts = 0
+        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
+    if(j>1 and j< Nx-1):
+        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
+        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
+    return [-sprung_links, -sprung_rechts]
+
+#Rechte Seite erstellen
+def make_rhs(a,b,Nx,hxs):
+    f = np.ones(Nx)
+    rhs = np.zeros(Nx)
+    for i in range(1,Nx-1):
+        rhs[i] = f[i]*(1/2*hxs[i-1]+1/2*hxs[i])
+    rhs[0] = a
+    rhs[Nx-1] = b
+    rhs[1] += rhs[0]
+    rhs[Nx-2] += rhs[Nx-1]
+    return rhs
+
+#Fehlerabschätzung
+def discretization_error(xs, zs, f, Nx):
+    error = 0
+    j = 1
+    while j < Nx-1:
+        #linkes 1st order polynom bilden
+        x = [xs[j-1], xs[j]]
+        z = [zs[j-1], zs[j]]
+        [a1,b1] = first_order_coefficients(j,z,x)
+        #rechtes 1st order polynom bilden
+        x = [xs[j], xs[j+1]]
+        z = [zs[j], zs[j+1]]
+        [a2,b2] = first_order_coefficients(j,z,x)
+        #2nd order polynom bilden
+        x = [xs[j-1], xs[j], xs[j+1]]
+        z = [zs[j-1], zs[j], zs[j+1]]
+        [a,b,c] = second_order_coefficients(j, z, x)
+        #linke Seite
+        error_l = f*((a-a1)*(x[1]-x[0]) + 1/2*(b-b1)*(x[1]**2-x[0]**2) + 1/3*c*(x[1]**3-x[0]**3))
+        #rechte Seite
+        error_r = f*((a-a2)*(x[2]-x[1]) + 1/2*(b-b2)*(x[2]**2-x[1]**2) + 1/3*c*(x[2]**3-x[1]**3))
+        #2 Schritte zusammenfügen
+        error += abs(error_l) + abs(error_r)
+        j += 2
+    return error
+
+def iteration_error(xs, zs, vs, Nx):
+    error = 0
+    for j in range(1, Nx):
+        #erster Term
+        x = [xs[j-1], xs[j]]
+        z = [zs[j-1], zs[j]]
+        [a1,b1] = first_order_coefficients(j,z,x)
+        term1 = a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2)
+        #zweiter term
+        [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs,Nx)
+        term2 = 1/2 * (sprung_l * z[0] + sprung_r * z[1])
+        error += abs(term1+term2)
+    return error
+
+def error_analysis(v_h, A, rhs):
+    #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    J = np.ones(A.shape[1])
+    J[0] = 0
+    J[-1] = 0
+    z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    #Diskretisierungsfehler berechnen
+    eta_h = discretization_error(xs, z_h, 1, Nx)
+    #Iterationsfehler berechnen
+    eta_m = iteration_error(xs, z_h, v_h, Nx)
+    #Abbruchkriterium überprüfen
+    if(eta_m < eta_h):
+        fertig = True
+
+#######################
 # time stepping methods
 #######################
 def heun_step(Vmhn, rhs, t, ht):
@@ -273,6 +369,7 @@ def implicit_euler_step(Vmhn0, dt_linear, t, ht, maxit=1000, eps=1e-10):
     linop_cn = sparse.linalg.LinearOperator(linop_shape, matvec=lambda x: x - ht * linop * x)
     # solve the linear system
     V1 = sparse.linalg.cg(linop_cn, Vmhn, maxiter=maxit, tol=eps)[0]
+    error_analysis(Vmhn0, linop_cn, Vmhn)
     return V1.reshape(Vmhn0.shape)
 
 """
@@ -436,161 +533,6 @@ if __name__ == '__main__':
     mass_inv_stiffness = mass_inv @ stiffness
     #print("Mass^-1 Stiffness")
     #print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
-
-#############################################################################################################
-    def second_order_coefficients(i, ui, xi):
-        a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-        b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
-        c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-        return [a,b,c]
-
-    def first_order_coefficients(i, u, x):
-        a = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
-        b = (u[0]-u[1])/(x[0]-x[1])
-        return [a, b]
-    
-    def abl(x1, x2, v1, v2):
-        return (v2-v1)/(x2-x1)
-
-    def calc_sprungterme(j, v, x, Nx):
-        if(j == 1):
-            sprung_links = 0
-            sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
-        if(j == Nx-1):
-            sprung_rechts = 0
-            sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
-        if(j>1 and j< Nx-1):
-            sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
-            sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
-        return [-sprung_links, -sprung_rechts]
-    
-    #Matrix A erstellen
-    def make_matrix_A(Nx, hxs):
-        A = make_laplace(Nx, hxs, bounds='dirichlet')
-        A[0,0] = 1
-        A[Nx-1, Nx-1] = 1
-        for i in range(0, Nx):
-            A[1,i] = A[1,i] - A[0,i]*A[1,0]
-            A[Nx-2, i] = A[Nx-2, i] - A[Nx-1, i]*A[Nx-2,Nx-1]
-        return A
-
-    #Rechte Seite erstellen
-    def make_rhs(a,b,Nx,hxs):
-        f = np.ones(Nx)
-        rhs = np.zeros(Nx)
-        for i in range(1,Nx-1):
-            rhs[i] = f[i]*(1/2*hxs[i-1]+1/2*hxs[i])
-        rhs[0] = a
-        rhs[Nx-1] = b
-        rhs[1] += rhs[0]
-        rhs[Nx-2] += rhs[Nx-1]
-        return rhs
-
-    #Fehlerabschätzung
-    def discretization_error(xs, zs, f, Nx):
-        error = 0
-        j = 1
-        while j < Nx-1:
-            #linkes 1st order polynom bilden
-            x = [xs[j-1], xs[j]]
-            z = [zs[j-1], zs[j]]
-            [a1,b1] = first_order_coefficients(j,z,x)
-            #rechtes 1st order polynom bilden
-            x = [xs[j], xs[j+1]]
-            z = [zs[j], zs[j+1]]
-            [a2,b2] = first_order_coefficients(j,z,x)
-            #2nd order polynom bilden
-            x = [xs[j-1], xs[j], xs[j+1]]
-            z = [zs[j-1], zs[j], zs[j+1]]
-            [a,b,c] = second_order_coefficients(j, z, x)
-            #linke Seite
-            error_l = f*((a-a1)*(x[1]-x[0]) + 1/2*(b-b1)*(x[1]**2-x[0]**2) + 1/3*c*(x[1]**3-x[0]**3))
-            #rechte Seite
-            error_r = f*((a-a2)*(x[2]-x[1]) + 1/2*(b-b2)*(x[2]**2-x[1]**2) + 1/3*c*(x[2]**3-x[1]**3))
-            #2 Schritte zusammenfügen
-            error += abs(error_l) + abs(error_r)
-            j += 2
-        return error
-
-    def iteration_error(xs, zs, vs, Nx):
-        error = 0
-        for j in range(1, Nx):
-            #erster Term
-            x = [xs[j-1], xs[j]]
-            z = [zs[j-1], zs[j]]
-            [a1,b1] = first_order_coefficients(j,z,x)
-            term1 = a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2)
-            #zweiter term
-            [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs,Nx)
-            term2 = 1/2 * (sprung_l * z[0] + sprung_r * z[1])
-            error += abs(term1+term2)
-        return error
-    
-    iter_error = []
-    iter_error_exact = []
-    discret_error = []
-    iterations = []
-    max_it = 100
-    eta_h = 0
-    eta_m = 1
-    while(eta_h < eta_m):
-        #Anfangswerte
-        a = 0
-        b = 0
-
-        #Matrix A erstellen
-        A = make_matrix_A(Nx, hxs)
-
-        #rechte Seite f erstellen
-        rhs = make_rhs(a,b,Nx,hxs)
-        
-        #Gleichungssystem lösen
-        v_h = sparse.linalg.cg(A , rhs ,x0 = np.zeros(rhs.shape), tol=0, atol=0, maxiter = max_it)[0]      #Av=f  --CG-->  v_h
-
-        #exacte Lösung bestimmen
-        v_h_exact = sparse.linalg.cg(A , rhs ,x0 = np.zeros(rhs.shape), tol=0, atol=0)[0]
-        eta_m_exact = 0
-        for i in range(0, Nx):
-            eta_m_exact += abs(v_h[i] - v_h_exact[i])
-
-        #duales Problem lösen
-        J = np.ones(A.shape[1])
-        J[0] = 0
-        J[-1] = 0
-        z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-
-        print('Für maximal ', max_it, ' Iterationen:')
-        #Diskretisierungsfehler
-        eta_h = discretization_error(xs, z_h, 1, Nx)
-        print("     discretization error", eta_h)
-
-        #Iterationsfehler
-        eta_m = iteration_error(xs, z_h, v_h, Nx)
-        print("     iteration error", eta_m)
-        print('     exact iteration error: ', eta_m_exact)
-
-        #Gesamtfehler E = eta_h + eta_m = discretization error + iteration error
-        error = eta_h + eta_m
-        print("     Gesamttfehler", error)
-        print(" ")
-
-        iterations.append(max_it)
-        iter_error.append(eta_m)
-        iter_error_exact.append(eta_m_exact)
-        discret_error.append(eta_h)
-        max_it += 100
-
-    #plot
-    iter_error = np.array(iter_error)
-    discret_error = np.array(discret_error)
-    plt.plot(iterations, iter_error, label = 'extimated iteration error')
-    plt.plot(iterations, iter_error_exact, label = 'exact iteration error')
-    plt.plot(iterations, discret_error, label = 'estimated discretization error')
-    plt.xlabel('iterations')
-    plt.yscale('log')
-    plt.legend()
-    plt.show()
-#############################################################################################################
 
     # system matrices for crank_nicolson
     @lru_cache(maxsize=8)
