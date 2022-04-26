@@ -241,8 +241,8 @@ def second_order_coefficients(j, u, x):
     return [a,b,c]
 
 def first_order_coefficients(j, u, x):
-    xi = [x[j-1], x[j]]
-    ui = [u[j-1], u[j]]
+    x = [x[j-1], x[j]]
+    u = [u[j-1], u[j]]
     a = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
     b = (u[0]-u[1])/(x[0]-x[1])
     return [a, b]
@@ -273,7 +273,7 @@ def discretization_error(x, z_h, u1, u0, Nx):
         [c1,d1] = first_order_coefficients(j, u0, x)
         [d1_,e1_] = first_order_coefficients(j, z_h, x)
         #rechtes Intervall 2
-        [a2,b2] = first_order_coefficients(j+1, z_h, x)
+        [a2,b2] = first_order_coefficients(j+1, u1, x)
         [c2,d2] = first_order_coefficients(j+1, u0, x)
         [d2_,e2_] = first_order_coefficients(j+1, z_h, x)
         #2nd order polynom bilden
@@ -312,14 +312,9 @@ def iteration_error(xs, zs, vs, Nx):
 def error_analysis(x, V0, V1, A, rhs):
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
     J = np.ones(A.shape[1])
-    J[0] = 0
-    J[-1] = 0
     z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    plt.plot(x, z_h)
-    plt.show()
     #Diskretisierungsfehler berechnen
     eta_h = discretization_error(x, z_h, V1, V0, Nx)
-    print(discretization_error)
     #Iterationsfehler berechnen
     #eta_m = iteration_error(xs, z_h, v_h, Nx)
     
@@ -352,7 +347,7 @@ dt_linear: tuple of 2 functions
              the first returns the system matrix for the explicit term,
              the second function returns the system matrix for the implicit term,
 """
-def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
+def crank_nicolson_FE_step(xs, Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     # get explicit and implicit system matrix
     cn_sys_expl, cn_sys_impl = sys_expl_impl    #cn_sys_impl = (eye - ht * mass_inv_stiffness)  ; cn_sys_expl = eye     (for implicit euler) 
 
@@ -362,7 +357,7 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]       # Vmhn0 = V1
-    error_analysis(xs, V0, Vmhn0, A, rhs)                                      # FEHLERSCHÄTZER
+    error_analysis(xs, V0, Vmhn0[:,0], A, rhs)                                      # FEHLERSCHÄTZER
     return Vmhn0
 
 def implicit_euler_step(Vmhn0, dt_linear, t, ht, maxit=1000, eps=1e-10):
@@ -385,7 +380,7 @@ ht: time step width
 traj=False: return only the final solution at t1
 traj=True:  return intermediate solution for each time step t0+k*ht for k = 0,1,...
 """
-def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
+def stepper(xs, integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     Vmhn = Vmhn0
 
     if not traj:
@@ -397,7 +392,7 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     ht_ = (t1-t0) / n_steps
 
     for i in range(n_steps):
-        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
+        Vmhn = integator(xs, Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
         if not traj:
             result = Vmhn
         else:
@@ -433,36 +428,36 @@ def godunov_step_1H_1CN(Vmhn0, rhs_reaction, system_matrices_expl_impl, t, ht, *
 
     return Vmhn
 
-def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, **kwargs):
+def strang_step_1H_1CN_FE(xs, Vmhn0, rhs, t, ht, **kwargs):
     # unpack rhs for each component
     rhs_reaction, system_matrices_expl_impl = rhs
 
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, **kwargs)
+    Vmhn = crank_nicolson_FE_step(xs, Vmhn, system_matrices_expl_impl, t, ht, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
     return Vmhn
 
-def strang_1H_1CN_FE(Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
-    return stepper(strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
+def strang_1H_1CN_FE(xs, Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
+    return stepper(xs, strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
 
 def strang_H_CN(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = crank_nicolson
-    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
 def strang_H_CN_FE(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = crank_nicolson_FE
-    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
 def strang_H_IE(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = implicit_euler
-    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
 if __name__ == '__main__':
     initial_value_file = sys.argv[1]
@@ -582,6 +577,7 @@ if __name__ == '__main__':
     else:
         # easier implementation
         trajectory = strang_1H_1CN_FE(
+            xs, 
             Vmhn0,
             rhs_hodgkin_huxley,
             (ie_sys_expl, ie_sys_impl),
