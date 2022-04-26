@@ -1,3 +1,2 @@
 # Projektarbeit: muscle models
-# error control in the 1D diffusion term
-Moritz Schweller 
+error control in the 1D diffusion term
