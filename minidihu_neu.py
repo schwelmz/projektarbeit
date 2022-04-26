@@ -2,7 +2,6 @@ import sys
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
-import matplotlib.pyplot as plt
 from functools import lru_cache
 
 ########################
@@ -219,6 +218,61 @@ def make_inv_lumped_mass_matrix(N, hx):
         vals.append(1/lumped_val)
     return sparse.csr_matrix((vals, (rows, cols)), shape=(N,N))
 
+def make_lumped_mass_matrix(N, hx):
+    if hasattr(hx, "__len__"):
+        """
+        0    1    2
+        |----|----|----|--
+        h0   h1   h2
+        """
+        assert(len(hx) == N - 1), f"len(hx) = {len(hx)}, N = {N}"
+        h = lambda i: hx[i]
+    else:
+        h = lambda i: hx
+
+    rows = []
+    cols = []
+    vals = []
+    for i in range(N):
+        lumped_val = 0
+        if i != 0:
+            lumped_val += h(i-1) / 3 # φ_i|_left φ_i|_left
+            lumped_val += h(i-1) / 6 # φ_i|_left φ_i-1|_right
+        if i != N-1:
+            lumped_val += h(i) / 3 # φ_i|_right φ_i|_right
+            lumped_val += h(i) / 6 # φ_i|_right φ_i+1|_left
+        rows.append(i)
+        cols.append(i)
+        vals.append(lumped_val)
+    return sparse.csr_matrix((vals, (rows, cols)), shape=(N,N))
+
+def make_support_matrix(N, hx):
+    if hasattr(hx, "__len__"):
+        """
+        0    1    2
+        |----|----|----|--
+        h0   h1   h2
+        """
+        assert(len(hx) == N - 1), f"len(hx) = {len(hx)}, N = {N}"
+        h = lambda i: hx[i]
+    else:
+        h = lambda i: hx
+
+    rows = []
+    cols = []
+    vals = []
+    for i in range(N):
+        val = 0
+        if i != 0:
+            val += h(i-1)
+        if i != N-1:
+            val += h(i)
+        rows.append(i)
+        cols.append(i)
+        vals.append(val)
+    # This is equivalent to the lumped mass matrix!
+    return sparse.csr_matrix((vals, (rows, cols)), shape=(N,N))
+
 
 
 """
@@ -295,29 +349,30 @@ def discretization_error(x, z_h, u1, u0, Nx):
         j += 2
     return error
 
-def iteration_error(xs, zs, vs, Nx):
+def iteration_error(x, z_h, u1, u0, Nx):
     error = 0
     for j in range(1, Nx):
         #erster Term
-        x = [xs[j-1], xs[j]]
-        z = [zs[j-1], zs[j]]
-        [a1,b1] = first_order_coefficients(j,z,x)
-        term1 = a1*(x[1]-x[0]) + 1/2*b1*(x[1]**2-x[0]**2)
+        [a,b] = first_order_coefficients(j,u1,x)
+        [c,d] = first_order_coefficients(j,u0,x)
+        [f,g] = first_order_coefficients(j,z_h,x)
+        term1 = (a*f+c*f)*(x[j]-x[j-1]) + 1/2*(b*f+d*f+a*g+c*g)*(x[j]**2-x[j-1]**2) + 1/3*(b*g+d*g)*(x[j]**3-x[j-1]**3)
         #zweiter term
-        [sprung_l, sprung_r] = calc_sprungterme(j,vs,xs,Nx)
-        term2 = 1/2 * (sprung_l * z[0] + sprung_r * z[1])
-        error += abs(term1+term2)
+        [sprung_l, sprung_r] = calc_sprungterme(j,u1,x,Nx)
+        term2 = 1/2 * (sprung_l * z_h[j-1] + sprung_r * z_h[j])
+        error += abs(-term1-term2)
     return error
 
-def error_analysis(x, V0, V1, A, rhs):
+def error_analysis(x, V0, V1, A):
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
     J = np.ones(A.shape[1])
     z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
     #Diskretisierungsfehler berechnen
     eta_h = discretization_error(x, z_h, V1, V0, Nx)
     #Iterationsfehler berechnen
-    #eta_m = iteration_error(xs, z_h, v_h, Nx)
-    
+    eta_m = iteration_error(x, z_h, V1, V0, Nx)
+    #print
+    print('Diskretisierungsfehler: ', eta_h, 'Iterationerror: ', eta_m)
 
 #######################
 # time stepping methods
@@ -346,27 +401,34 @@ Crank-Nicolson step for Finite-Element formulation
 dt_linear: tuple of 2 functions
              the first returns the system matrix for the explicit term,
              the second function returns the system matrix for the implicit term,
+           system matrices will act only on the V-channel
 """
-def crank_nicolson_FE_step(xs, Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
+def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     # get explicit and implicit system matrix
     cn_sys_expl, cn_sys_impl = sys_expl_impl    #cn_sys_impl = (eye - ht * mass_inv_stiffness)  ; cn_sys_expl = eye     (for implicit euler) 
 
     Vmhn0 = np.array(Vmhn0)
-    V0 = Vmhn0[:,0]                                                        # V0
 
+    # only act on V channel
+    V0 = Vmhn0[:,0]             #V0
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
-    Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]       # Vmhn0 = V1
-    error_analysis(xs, V0, Vmhn0[:,0], A, rhs)                                      # FEHLERSCHÄTZER
+    Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
+    error_analysis(xs, V0, Vmhn0[:,0], A)
     return Vmhn0
 
+"""
+dt_linear: linear rhs function. Is applied to all channels
+"""
 def implicit_euler_step(Vmhn0, dt_linear, t, ht, maxit=1000, eps=1e-10):
     Vmhn = Vmhn0.reshape(-1)
     linop_shape = (Vmhn.shape[0], Vmhn.shape[0])
+    # rhs lin op: flattened Vmhn -> Vmhn -> dt_linear -> dt Vmhn -> flatten dt Vmhn
     linop = sparse.linalg.LinearOperator(linop_shape, matvec=lambda x: dt_linear(x.reshape(Vmhn0.shape), t).reshape(-1))
-    linop_cn = sparse.linalg.LinearOperator(linop_shape, matvec=lambda x: x - ht * linop * x)
+    # system matrix
+    linop_ie = sparse.linalg.LinearOperator(linop_shape, matvec=lambda x: x - ht * linop * x)
     # solve the linear system
-    V1 = sparse.linalg.cg(linop_cn, Vmhn, maxiter=maxit, tol=eps)[0]
+    V1 = sparse.linalg.cg(linop_ie, Vmhn, maxiter=maxit, tol=eps)[0]
     return V1.reshape(Vmhn0.shape)
 
 """
@@ -380,7 +442,7 @@ ht: time step width
 traj=False: return only the final solution at t1
 traj=True:  return intermediate solution for each time step t0+k*ht for k = 0,1,...
 """
-def stepper(xs, integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
+def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     Vmhn = Vmhn0
 
     if not traj:
@@ -392,7 +454,8 @@ def stepper(xs, integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     ht_ = (t1-t0) / n_steps
 
     for i in range(n_steps):
-        Vmhn = integator(xs, Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
+        print(i, '/', n_steps, 'timesteps')
+        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
         if not traj:
             result = Vmhn
         else:
@@ -428,37 +491,138 @@ def godunov_step_1H_1CN(Vmhn0, rhs_reaction, system_matrices_expl_impl, t, ht, *
 
     return Vmhn
 
-def strang_step_1H_1CN_FE(xs, Vmhn0, rhs, t, ht, **kwargs):
+def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, **kwargs):
     # unpack rhs for each component
     rhs_reaction, system_matrices_expl_impl = rhs
 
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    Vmhn = crank_nicolson_FE_step(xs, Vmhn, system_matrices_expl_impl, t, ht, **kwargs)
+    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
     return Vmhn
 
-def strang_1H_1CN_FE(xs, Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
-    return stepper(xs, strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
+def strang_1H_1CN_FE(Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
+    return stepper(strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
 
 def strang_H_CN(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = crank_nicolson
-    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
 def strang_H_CN_FE(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = crank_nicolson_FE
-    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
 def strang_H_IE(Vmhn, rhs0, rhs1, t0, t1, ht0, ht1, hts, maxit=1000, eps=1e-10, traj=False):
     int0 = heun
     int1 = implicit_euler
-    return stepper(xs, make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
+    return stepper(make_strang_step(int0, ht0, int1, ht1, maxit, eps), Vmhn, [rhs0,rhs1], t0, t1, hts, traj=traj)
 
+def coupled_EE_FE(Vmhn0, Minv, Minv_A, hh, t0, t1, ht, traj=False):
+    """
+    Minv should be a lumped mass matrix Mbarinv
+    """
+    Minv_Mbar = lambda x: x
+
+    Vmhn = Vmhn0
+
+    if not traj:
+        result = Vmhn
+    else:
+        result = [Vmhn]
+
+    n_steps = max(1, int((t1-t0)/ht + 0.5)) # round to nearest integer
+    ht_ = (t1-t0) / n_steps
+
+    for i in range(n_steps):
+        Vmhn_ = np.array(Vmhn)
+        hh_Vmhn = hh(Vmhn, i*ht_)
+
+        """
+        ⟨u⁺, φⱼ⟩ = ⟨u, φⱼ⟩ + h a ⟨∇u, ∇φⱼ⟩ + h ⟨f(u), φⱼ⟩ ∀ⱼ
+
+        u =  ∑ ūᵢ φᵢ
+
+        M ū⁺ = M ū + h A ū + h F
+
+        Fⱼ =  ⟨f(∑ ūᵢ φᵢ), φⱼ⟩    // now: trapezoidal rule
+           = ½ h₋ fⱼ₋₁ φⱼ(xⱼ₋₁) + ½ (h₋ + h₊) fⱼ φⱼ(xⱼ) + ½ h₊ fⱼ₊₁ φⱼ(xⱼ₊₁)
+           =           0        + ½ (h₋ + h₊) fⱼ 1      +           0
+           = ½ (h₋ + h₊) fⱼ 1
+           = M̄ⱼ fⱼ    where M̄ is equivalent to the lumped mass matrix
+
+        ⇒ M ū⁺ = M ū + h A ū + h M̄ fⱼ
+        ⇔ ū⁺ = ū + h M⁻¹ A ū + h M⁻¹ M̄ fⱼ
+             = ū + h M⁻¹ A ū + h fⱼ    if we use mass lumping for the inverse
+
+
+        M V+ = V + h A V + h M̄ HH0(Vmnh)
+        M m+ = m         + h M̄ HH1(Vmnh)
+        M n+ = n         + h M̄ HH2(Vmnh)
+        M h+ = h         + h M̄ HH3(Vmnh)
+        """
+        Vmhn_[:,0] += ht_ * Minv_A @ Vmhn[:,0]
+        Vmhn_[:,0] += ht_ * Minv_Mbar(hh_Vmhn[:,0])
+        Vmhn_[:,1] += ht_ * Minv_Mbar(hh_Vmhn[:,1])
+        Vmhn_[:,2] += ht_ * Minv_Mbar(hh_Vmhn[:,2])
+        Vmhn_[:,3] += ht_ * Minv_Mbar(hh_Vmhn[:,3])
+
+        Vmhn = Vmhn_
+
+        if not traj:
+            result = Vmhn
+        else:
+            result.append(Vmhn)
+
+    return np.asarray(result) # cast list to array if we store the trajectory
+
+def error_est_test():
+    Nx = 200; Ne = Nx - 1
+    Ne = 20; Nx = Ne + 1
+    h = 1 / Ne
+    print(Nx, Ne, h)
+    laplace = make_laplace(Nx, h, bounds='dirichlet')
+    print(laplace)
+    rhs = np.ones(Nx) * h # ∫f φᵢdx
+    # boundary
+    rhs[0] = 0
+    rhs[-1] = 0
+    print('f', rhs)
+    J = rhs
+    u = sparse.linalg.gmres(laplace, rhs)
+    z = sparse.linalg.gmres(laplace, J)
+    assert u[1] == 0; u = u[0]
+    assert z[1] == 0; z = z[0]
+    print('u', u)
+
+    u_prime = (u[1:] - u[:-1]) / h # on each element
+    z_prime = (z[1:] - z[:-1]) / h # on each element
+    print('p', u_prime)
+
+    jumps_u = u_prime[1:] - u_prime[:-1] # on the inner nodes
+    jumps_z = z_prime[1:] - z_prime[:-1] # on the inner nodes
+    print('j', jumps_u)
+
+    t1 = 0
+    t2 = 0
+    t3 = 0
+    for ie in range(Ne):
+        t1 += h * (z[ie] + z[ie+1])/2
+        if ie != 0:
+            t2 += .5 * jumps_u[ie - 1] * z[ie]
+        if ie != Ne - 1:
+            t3 += .5 * jumps_u[ie] * z[ie+1]
+
+    print(t1, t2, t3)
+    print(t1 + t2 + t3)
+# error_est_test()
+
+
+# if False and __name__ == '__main__':
 if __name__ == '__main__':
     initial_value_file = sys.argv[1]
 
@@ -495,7 +659,6 @@ if __name__ == '__main__':
     Nx = xs.shape[0]
     print(f"  length: {xs[-1]:>5.2f}cm")
     print(f"  nodes:  {Nx:>4}")
-    print("Intervall-Länge h:",hxs)
     print(f"Initial values:")
     print(f"  V: {np.min(Vmhn0[:,0]):>+.2e} -- {np.max(Vmhn0[:,0]):>+.2e}")
     print(f"  m: {np.min(Vmhn0[:,1]):>+.2e} -- {np.max(Vmhn0[:,1]):>+.2e}")
@@ -505,7 +668,6 @@ if __name__ == '__main__':
     print(f"  sigma: {Conductivity:>7.3f}")
     print(f"  Am:    {Am:>7.3f}")
     print(f"  Cm:    {Cm:>7.3f}")
-
 
     def arr2str(arr, **kwargs):
         return np.array2string(arr, formatter={'float_kind': lambda x: '{:+.2e}'.format(x)}, **kwargs).replace('+0.00e+00', '    -    ')
@@ -517,28 +679,30 @@ if __name__ == '__main__':
     # The effect, that the V-channel increases just before the end of the fibers is also present in the opendihu results.
     # opendihu commit: 44cadd4060552f6d1ad4e89153f37d1b843800da
     laplace = make_laplace(Nx, hxs, bounds='neumann')
-    #print("Laplace")
-    #print('  '+arr2str(laplace.todense(), prefix='  '))
+    print("Laplace")
+    print('  '+arr2str(laplace.todense(), prefix='  '))
     prefactor = Conductivity / Am / Cm # mS / uF = [mS/cm] / ([cm^-1] * [uF/cm^2])
     # we have _negative_ laplace on rhs
     stiffness = -prefactor * laplace
-    #print("Stiffness \033[90m[opendihu: `Mat Object: stiffnessMatrix`]\033[m")
-    #print('  '+arr2str(stiffness.todense(), prefix='  '))
+    print("Stiffness \033[90m[opendihu: `Mat Object: stiffnessMatrix`]\033[m")
+    print('  '+arr2str(stiffness.todense(), prefix='  '))
     mass_inv = make_inv_lumped_mass_matrix(Nx, hxs)
-    #print("Mass^-1 (lumped) \033[90m[opendihu: `Mat Object: inverseLumpedMassMatrix`]\033[m")
-    #print('  '+arr2str(mass_inv.todense(), prefix='  '))
+    print("Mass^-1 (lumped) \033[90m[opendihu: `Mat Object: inverseLumpedMassMatrix`]\033[m")
+    print('  '+arr2str(mass_inv.todense(), prefix='  '))
     mass_inv_stiffness = mass_inv @ stiffness
-    #print("Mass^-1 Stiffness")
-    #print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
+    print("Mass^-1 Stiffness")
+    print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
+    mass = make_lumped_mass_matrix(Nx, hxs)
+
 
     # system matrices for crank_nicolson
     @lru_cache(maxsize=8)
     def cn_sys_expl(ht):
-        print(f"> build expl. matrix for ht={ht} \033[90m[opendihu: crank_nicolson.tpp:setIntegrationMatrixRightHandSide]\033[m")
+        print(f"> build expl. CN matrix for ht={ht} \033[90m[opendihu: crank_nicolson.tpp:setIntegrationMatrixRightHandSide]\033[m")
         return sparse.eye(Nx) + 0.5 * ht * mass_inv_stiffness
     @lru_cache(maxsize=8)
     def cn_sys_impl(ht):
-        print(f"> build impl. matrix for ht={ht} \033[90m[opendihu: crank_nicolson.tpp:setSystemMatrix]\033[m")
+        print(f"> build impl. CN matrix for ht={ht} \033[90m[opendihu: crank_nicolson.tpp:setSystemMatrix]\033[m")
         return sparse.eye(Nx) - 0.5 * ht * mass_inv_stiffness
     # system matrices for implicit euler
     @lru_cache(maxsize=8)
@@ -552,6 +716,9 @@ if __name__ == '__main__':
 
     def rhs_hodgkin_huxley(Vmhn, t):
         return rhs_hh(Vmhn)
+    
+    def dual_problem_rhs(ht):
+       return mass - ht * stiffness
 
     # Solve the equation
 
@@ -563,10 +730,16 @@ if __name__ == '__main__':
         eps=1e-12, # stopping criterion for the linear solver in the diffusion step
         maxit=1000, # maximum number of iterations for the implicit solver
     )
-    # solve reaction (Hodgkin-Huxley) with Heun's method (explicit, second order)
-    # solve diffusion with Crank-Nicolson (implicit, second order)
-    # combine both with strang splitting
-    if False:
+
+    #method = 'opendihu'
+    #method = 'opendihu1'
+    #method = 'FE-EE'
+    method = 'H-IE'
+
+    if method == 'opendihu':
+        # solve reaction (Hodgkin-Huxley) with Heun's method (explicit, second order)
+        # solve diffusion with Crank-Nicolson (implicit, second order)
+        # combine both with strang splitting
         trajectory2 = strang_H_CN_FE(
             Vmhn0, # initial values
             rhs0=rhs_hodgkin_huxley,
@@ -574,10 +747,30 @@ if __name__ == '__main__':
             traj=True, # return full trajectory
             **time_discretization
         )
-    else:
-        # easier implementation
+    elif method == 'opendihu1':
+        # equivalent, but with easier implementation
         trajectory = strang_1H_1CN_FE(
-            xs, 
+            Vmhn0,
+            rhs_hodgkin_huxley,
+            (cn_sys_expl, cn_sys_impl),
+            time_discretization['t0'],
+            time_discretization['t1'],
+            time_discretization['hts'],
+            traj=True,
+            eps=time_discretization['eps'],
+            maxit=time_discretization['maxit'],
+        )
+    elif method == 'FE-EE':
+        # stable dt=3.6e-3, unstable dt=3.7e-3
+        trajectory = coupled_EE_FE(Vmhn0, mass_inv, mass_inv_stiffness, rhs_hodgkin_huxley,
+            time_discretization['t0'],
+            time_discretization['t1'],
+            time_discretization['hts'],
+            traj=True
+        )
+    elif method == 'H-IE':
+        # reuse CN code by replacing the implicit and explicit system matrices
+        trajectory = strang_1H_1CN_FE(
             Vmhn0,
             rhs_hodgkin_huxley,
             (ie_sys_expl, ie_sys_impl),
@@ -625,4 +818,4 @@ if __name__ == '__main__':
     ax.plot(xs, trajectory[0, :, 3], '--', color='black')
     ax.plot(xs, trajectory[-1, :, 3], color='black')
 
-    #plt.show()
+    plt.show()
