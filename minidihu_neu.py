@@ -371,7 +371,7 @@ def error_analysis(x, V0, V1, A):
     eta_h = discretization_error(x, z_h, V1, V0, Nx)
     #Iterationsfehler berechnen
     eta_m = iteration_error(x, z_h, V1, V0, Nx)
-    #print
+    #print error
     print('Diskretisierungsfehler: ', eta_h, 'Iterationerror: ', eta_m)
 
 #######################
