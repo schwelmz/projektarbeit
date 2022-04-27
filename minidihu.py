@@ -3,6 +3,7 @@ import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
 from functools import lru_cache
+import matplotlib.pyplot as plt
 
 ########################
 def extract_channels(file):
@@ -337,15 +338,15 @@ def discretization_error(x, z_h, u1, u0, Nx):
         k2_l = a1*b_ - a1*e1_ + a_*b1 - b1*d1_ + b_*c1- c1*e1_ + a_*d1 - d1*d1_
         k3_l = a1*c_ + b1*b_ - b1*e1_ + c1*c_ + b_*d1 - d1*e1_
         k4_l = b1*c_ + c_*d1
-        error_l = k1_l*(x[j]-x[j-1]) + 1/2*k2_l*(x[j]**2-x[j-1]**2) + 1/3*k3_l*(x[j]**3-x[j-1]**3) + 1/3*k4_l*(x[j]**4-x[j-1]**4)
+        error_l = -k1_l*(x[j]-x[j-1]) - 1/2*k2_l*(x[j]**2-x[j-1]**2) - 1/3*k3_l*(x[j]**3-x[j-1]**3) - 1/4*k4_l*(x[j]**4-x[j-1]**4)
         #rechte Seite
         k1_r = a2*a_ - a2*d1_ + a_*c1 - c2*d2_
         k2_r = a2*b_ - a2*e2_ + a_*b2 - b2*d2_ + b_*c2- c2*e2_ + a_*d2 - d2*d2_
         k3_r = a2*c_ + b2*b_ - b2*e2_ + c2*c_ + b_*d2 - d2*e2_
         k4_r = b2*c_ + c_*d2
-        error_r = k1_r*(x[j+1]-x[j]) + 1/2*k2_r*(x[j+1]**2-x[j]**2) + 1/3*k3_r*(x[j+1]**3-x[j]**3) + 1/3*k4_r*(x[j+1]**4-x[j]**4)
+        error_r = -k1_r*(x[j+1]-x[j]) - 1/2*k2_r*(x[j+1]**2-x[j]**2) - 1/3*k3_r*(x[j+1]**3-x[j]**3) - 1/4*k4_r*(x[j+1]**4-x[j]**4)
         #2 Schritte zusammenfügen
-        error += abs(-error_l) + abs(-error_r)
+        error += abs(error_l) + abs(error_r)
         j += 2
     return error
 
@@ -356,17 +357,27 @@ def iteration_error(x, z_h, u1, u0, Nx):
         [a,b] = first_order_coefficients(j,u1,x)
         [c,d] = first_order_coefficients(j,u0,x)
         [f,g] = first_order_coefficients(j,z_h,x)
-        term1 = (a*f+c*f)*(x[j]-x[j-1]) + 1/2*(b*f+d*f+a*g+c*g)*(x[j]**2-x[j-1]**2) + 1/3*(b*g+d*g)*(x[j]**3-x[j-1]**3)
+        term1 = -(a*f+c*f)*(x[j]-x[j-1]) - 1/2*(b*f+d*f+a*g+c*g)*(x[j]**2-x[j-1]**2) - 1/3*(b*g+d*g)*(x[j]**3-x[j-1]**3)
         #zweiter term
         [sprung_l, sprung_r] = calc_sprungterme(j,u1,x,Nx)
         term2 = 1/2 * (sprung_l * z_h[j-1] + sprung_r * z_h[j])
-        error += abs(-term1-term2)
+        error += abs(term1+term2)
     return error
 
-def error_analysis(x, V0, V1, A):
+def error_analysis(x, V0, V1, ht, i):
+    print('u1:     ', V1)
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    A = biliearform(ht)
     J = np.ones(A.shape[1])
-    z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    J[0] = 0
+    J[-1] = 0
+    z_h = sparse.linalg.gmres(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    if i == 500:
+        print('Bilinearform A:')
+        print('  '+arr2str(A.todense(), prefix='  '))
+        print('z_h:     ', z_h)
+        plt.plot(x, z_h)
+        plt.show()
     #Diskretisierungsfehler berechnen
     eta_h = discretization_error(x, z_h, V1, V0, Nx)
     #Iterationsfehler berechnen
@@ -403,7 +414,7 @@ dt_linear: tuple of 2 functions
              the second function returns the system matrix for the implicit term,
            system matrices will act only on the V-channel
 """
-def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
+def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, i, maxit=1000, eps=1e-10):
     # get explicit and implicit system matrix
     cn_sys_expl, cn_sys_impl = sys_expl_impl    #cn_sys_impl = (eye - ht * mass_inv_stiffness)  ; cn_sys_expl = eye     (for implicit euler) 
 
@@ -414,7 +425,7 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
-    error_analysis(xs, V0, Vmhn0[:,0], A)
+    error_analysis(xs, V0, Vmhn0[:,0], ht, i)
     return Vmhn0
 
 """
@@ -455,7 +466,7 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
 
     for i in range(n_steps):
         print(i, '/', n_steps, 'timesteps')
-        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
+        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
         if not traj:
             result = Vmhn
         else:
@@ -491,14 +502,14 @@ def godunov_step_1H_1CN(Vmhn0, rhs_reaction, system_matrices_expl_impl, t, ht, *
 
     return Vmhn
 
-def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, **kwargs):
+def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, i, **kwargs):
     # unpack rhs for each component
     rhs_reaction, system_matrices_expl_impl = rhs
 
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, **kwargs)
+    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, i, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
@@ -717,7 +728,7 @@ if __name__ == '__main__':
     def rhs_hodgkin_huxley(Vmhn, t):
         return rhs_hh(Vmhn)
     
-    def dual_problem_rhs(ht):
+    def biliearform(ht):
        return mass - ht * stiffness
 
     # Solve the equation
