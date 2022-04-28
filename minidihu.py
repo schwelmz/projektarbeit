@@ -365,14 +365,14 @@ def iteration_error(x, z_h, u1, u0, Nx):
     return error
 
 def error_analysis(x, V0, V1, ht, i):
-    print('u1:     ', V1)
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    A = biliearform(ht)
-    J = np.ones(A.shape[1])
+    A = dual_problem_matrix(ht)
+    J = np.ones(A.shape[1]) * hxs[2]
     J[0] = 0
     J[-1] = 0
-    z_h = sparse.linalg.gmres(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    if i == 500:
+    z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    if i == 2000:
+        print('u1:     ', V1)
         print('Bilinearform A:')
         print('  '+arr2str(A.todense(), prefix='  '))
         print('z_h:     ', z_h)
@@ -728,8 +728,8 @@ if __name__ == '__main__':
     def rhs_hodgkin_huxley(Vmhn, t):
         return rhs_hh(Vmhn)
     
-    def biliearform(ht):
-       return mass - ht * stiffness
+    def dual_problem_matrix(ht):
+       return mass + ht * stiffness
 
     # Solve the equation
 
