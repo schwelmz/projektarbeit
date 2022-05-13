@@ -366,15 +366,15 @@ def iteration_error(x, z_h, u1, u0, Nx):
 
 def error_analysis(x, V0, V1, ht, i):
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    A = dual_problem_matrix(ht)
-    J = np.ones(A.shape[1]) * hxs[2]
+    M = dual_problem_matrix(ht)
+    J = np.ones(M.shape[1]) * hxs[2]
     J[0] = 0
     J[-1] = 0
-    z_h = sparse.linalg.cg(A.T , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    if i == 2000:
+    z_h = sparse.linalg.cg(M , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
+    if i == 10:
         print('u1:     ', V1)
-        print('Bilinearform A:')
-        print('  '+arr2str(A.todense(), prefix='  '))
+        print('sys matrix duales problem:')
+        print('  '+arr2str(M.todense(), prefix='  '))
         print('z_h:     ', z_h)
         plt.plot(x, z_h)
         plt.show()
@@ -704,6 +704,10 @@ if __name__ == '__main__':
     print("Mass^-1 Stiffness")
     print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
     mass = make_lumped_mass_matrix(Nx, hxs)
+    mass[0,0] = 0
+    mass[-1,-1] = 0
+    print("mass matrix")
+    print('  '+arr2str(mass.todense(), prefix='  '))
 
 
     # system matrices for crank_nicolson
@@ -729,7 +733,8 @@ if __name__ == '__main__':
         return rhs_hh(Vmhn)
     
     def dual_problem_matrix(ht):
-       return mass + ht * stiffness
+        M = mass + ht * stiffness
+        return M.T
 
     # Solve the equation
 
