@@ -1,4 +1,5 @@
 import sys
+from tkinter import N
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
@@ -288,7 +289,7 @@ Cm = 0.58               # membrane capacitance [uF/cm^2]
 #######################
 
 def second_order_coefficients(j, u, x):
-    xi = [xs[j-1], xs[j], xs[j+1]]
+    xi = [x[j-1], x[j], x[j+1]]
     ui = [u[j-1], u[j], u[j+1]]
     a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
     b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
@@ -364,7 +365,7 @@ def iteration_error(x, z_h, u1, u0, Nx):
         error += abs(term1+term2)
     return error
 
-def error_analysis(x, V0, V1, ht, i):
+def error_analysis(x, V0, V1, ht, i, V_exact):
     #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
     M = dual_problem_matrix(ht)
     J = np.ones(M.shape[1]) * hxs[2]
@@ -382,8 +383,12 @@ def error_analysis(x, V0, V1, ht, i):
     eta_h = discretization_error(x, z_h, V1, V0, Nx)
     #Iterationsfehler berechnen
     eta_m = iteration_error(x, z_h, V1, V0, Nx)
+    #exacten Fehler berechnen
+    eta_exact = 0
+    for i in range(0, Nx):
+        eta_exact += abs(V1[i] - V_exact[i])
     #print error
-    print('Diskretisierungsfehler: ', eta_h, 'Iterationerror: ', eta_m)
+    print('Diskretisierungsfehler: ', eta_h, 'Iterationerror: ', eta_m, 'exact error: ', eta_exact)
 
 #######################
 # time stepping methods
@@ -425,7 +430,8 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, i, maxit=1000, eps=1e-10
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
-    error_analysis(xs, V0, Vmhn0[:,0], ht, i)
+    V_exact = sparse.linalg.cg(A, rhs, tol=0)[0] 
+    error_analysis(xs, V0, Vmhn0[:,0], ht, i, V_exact)
     return Vmhn0
 
 """
