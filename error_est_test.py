@@ -67,7 +67,7 @@ def second_order_coefficients(j, u, x):
     a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
     b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
     c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-    return [a,b,c]
+    return [c,b,a]
 
 def first_order_coefficients(j, u, x):
     x = [x[j], x[j+1]]
@@ -76,38 +76,14 @@ def first_order_coefficients(j, u, x):
     m = (u[0]-u[1])/(x[0]-x[1])
     return [m, c]
 
-Nx = 200; Ne = Nx - 1
-#Ne = 20; Nx = Ne + 1
-x = np.linspace(0,1, Nx)
-h = 1 / Ne
-print(Nx, Ne, h)
-
-laplace = make_laplace(Nx, h, bounds='dirichlet')
-print('  '+arr2str(laplace.todense(), prefix='  '))
-
-rhs = np.ones(Nx) * h # ∫f φᵢdx
-# boundary
-rhs[0] = 0
-rhs[-1] = 0
-print('f', rhs)
-
-J = rhs
-u = sparse.linalg.gmres(laplace, rhs)
-z = sparse.linalg.gmres(laplace, J)
-assert u[1] == 0; u = u[0]
-assert z[1] == 0; z = z[0]
-print('u', u)
-
-u_prime = (u[1:] - u[:-1]) / h # on each element
-z_prime = (z[1:] - z[:-1]) / h # on each element
-print('p', u_prime)
-
-jumps_u = u_prime[1:] - u_prime[:-1] # on the inner nodes
-jumps_z = z_prime[1:] - z_prime[:-1] # on the inner nodes
-print('j', jumps_u)
-
 #Iterationsfehler:
-    def calc_disc_error():
+def calc_iter_error(x, z, u, Ne, h):
+    u_prime = (u[1:] - u[:-1]) / h # on each element
+    z_prime = (z[1:] - z[:-1]) / h # on each element
+    #print('p', u_prime)
+    jumps_u = u_prime[1:] - u_prime[:-1] # on the inner nodes
+    jumps_z = z_prime[1:] - z_prime[:-1] # on the inner nodes
+    #print('j', jumps_u)
     t1 = 0
     t2 = 0
     t3 = 0
@@ -127,7 +103,74 @@ print('j', jumps_u)
     return (t1+t2+t3)
 
 #Diskretisierungsfehler:
-def discretization_error(x, z_h, u1, u0, Nx):
+def calc_disc_error(x, z, Ne, h):
+    t1 = 0
+    t2 = 0
     for ie in range(1, Ne):
-        
-        
+        [a,b,c] = second_order_coefficients(ie, z, x)
+        t1 += a/3*(x[ie+1]**3-x[ie]**3) + b/2*(x[ie+1]**2-x[ie]**2) + c*(x[ie+1]-x[ie])
+        t2 += -h * (z[ie] + z[ie+1])/2
+    return (t1+t2)
+
+##########################################################################################
+Nx = 200; Ne = Nx - 1
+#Ne = 20; Nx = Ne + 1
+x = np.linspace(0,1, Nx)
+h = 1 / Ne
+#print(Nx, Ne, h)
+
+laplace = make_laplace(Nx, h, bounds='dirichlet')
+#print('  '+arr2str(laplace.todense(), prefix='  '))
+
+rhs = np.ones(Nx) * h # ∫f φᵢdx
+# boundary
+rhs[0] = 0
+rhs[-1] = 0
+#print('f', rhs)
+J = rhs
+
+#exact solution
+u_exact = -1/2*(x**2-x)
+
+k = 10
+iter_error = 1
+disc_error = 0
+iters = []
+iter_error_list = []
+disc_error_list = []
+iter_error_exact_list = []
+while iter_error > disc_error:
+    #solve the problem
+    u = sparse.linalg.gmres(laplace, rhs, maxiter = k)
+    z = sparse.linalg.gmres(laplace, J)
+    #print('u', u)
+    #assert u[1] == 0; 
+    u = u[0]
+    assert z[1] == 0; z = z[0]
+
+    #error calculation
+    iter_error = calc_iter_error(x, z, u, Ne, h)
+    disc_error = calc_disc_error(x, z, Ne, h)
+    iter_error_exact = 0
+    for ix in range(0, Nx):
+        iter_error_exact += abs(u[ix]-u_exact[ix])
+    #print('iter_error: ', iter_error)
+    #print('disc_error: ', disc_error)
+    
+    iter_error_list.append(iter_error)
+    disc_error_list.append(disc_error)
+    iter_error_exact_list.append(iter_error_exact)
+    k += 30
+    iters.append(k)
+
+#plot
+iter_error_array = np.array(iter_error_list)
+disc_error_array = np.array(disc_error_list)
+iter_error_exact_array = np.array(iter_error_exact_list)
+plt.plot(iters, iter_error_array, label = 'estimated iteration error')
+plt.plot(iters, disc_error_array, label = 'estimated discretization error')
+plt.plot(iters, iter_error_exact_array, label = 'exact iteration error')
+plt.xlabel('iterations')
+plt.yscale('log')
+plt.legend()
+plt.show()
