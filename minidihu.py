@@ -287,108 +287,8 @@ Cm = 0.58               # membrane capacitance [uF/cm^2]
 #######################
 # error analysis
 #######################
-
-def second_order_coefficients(j, u, x):
-    xi = [x[j-1], x[j], x[j+1]]
-    ui = [u[j-1], u[j], u[j+1]]
-    a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-    b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
-    c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
-    return [a,b,c]
-
-def first_order_coefficients(j, u, x):
-    x = [x[j-1], x[j]]
-    u = [u[j-1], u[j]]
-    a = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
-    b = (u[0]-u[1])/(x[0]-x[1])
-    return [a, b]
-
-#Sprungterme berechnen
-def abl(x1, x2, v1, v2):
-    return (v2-v1)/(x2-x1)
-
-def calc_sprungterme(j, v, x, Nx):
-    if(j == 1):
-        sprung_links = 0
-        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
-    if(j == Nx-1):
-        sprung_rechts = 0
-        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
-    if(j>1 and j< Nx-1):
-        sprung_links = abl(x[j-2],x[j-1],v[j-2],v[j-1]) - abl(x[j-1],x[j],v[j-1],v[j])
-        sprung_rechts = abl(x[j-1],x[j],v[j-1],v[j]) - abl(x[j],x[j+1],v[j],v[j+1])
-    return [-sprung_links, -sprung_rechts]
-
-#Fehlerabschätzung
-def discretization_error(x, z_h, u1, u0, Nx):
-    error = 0
-    j = 1
-    while j < Nx-1:
-        #linkes Intervall 1
-        [a1,b1] = first_order_coefficients(j, u1, x)
-        [c1,d1] = first_order_coefficients(j, u0, x)
-        [d1_,e1_] = first_order_coefficients(j, z_h, x)
-        #rechtes Intervall 2
-        [a2,b2] = first_order_coefficients(j+1, u1, x)
-        [c2,d2] = first_order_coefficients(j+1, u0, x)
-        [d2_,e2_] = first_order_coefficients(j+1, z_h, x)
-        #2nd order polynom bilden
-        [a_,b_,c_] = second_order_coefficients(j, z_h, x)
-        #linke Seite
-        k1_l = a1*a_ - a1*d1_ + a_*c1 - c1*d1_
-        k2_l = a1*b_ - a1*e1_ + a_*b1 - b1*d1_ + b_*c1- c1*e1_ + a_*d1 - d1*d1_
-        k3_l = a1*c_ + b1*b_ - b1*e1_ + c1*c_ + b_*d1 - d1*e1_
-        k4_l = b1*c_ + c_*d1
-        error_l = -k1_l*(x[j]-x[j-1]) - 1/2*k2_l*(x[j]**2-x[j-1]**2) - 1/3*k3_l*(x[j]**3-x[j-1]**3) - 1/4*k4_l*(x[j]**4-x[j-1]**4)
-        #rechte Seite
-        k1_r = a2*a_ - a2*d1_ + a_*c1 - c2*d2_
-        k2_r = a2*b_ - a2*e2_ + a_*b2 - b2*d2_ + b_*c2- c2*e2_ + a_*d2 - d2*d2_
-        k3_r = a2*c_ + b2*b_ - b2*e2_ + c2*c_ + b_*d2 - d2*e2_
-        k4_r = b2*c_ + c_*d2
-        error_r = -k1_r*(x[j+1]-x[j]) - 1/2*k2_r*(x[j+1]**2-x[j]**2) - 1/3*k3_r*(x[j+1]**3-x[j]**3) - 1/4*k4_r*(x[j+1]**4-x[j]**4)
-        #2 Schritte zusammenfügen
-        error += abs(error_l) + abs(error_r)
-        j += 2
-    return error
-
-def iteration_error(x, z_h, u1, u0, Nx):
-    error = 0
-    for j in range(1, Nx):
-        #erster Term
-        [a,b] = first_order_coefficients(j,u1,x)
-        [c,d] = first_order_coefficients(j,u0,x)
-        [f,g] = first_order_coefficients(j,z_h,x)
-        term1 = -(a*f+c*f)*(x[j]-x[j-1]) - 1/2*(b*f+d*f+a*g+c*g)*(x[j]**2-x[j-1]**2) - 1/3*(b*g+d*g)*(x[j]**3-x[j-1]**3)
-        #zweiter term
-        [sprung_l, sprung_r] = calc_sprungterme(j,u1,x,Nx)
-        term2 = 1/2 * (sprung_l * z_h[j-1] + sprung_r * z_h[j])
-        error += abs(term1+term2)
-    return error
-
-def error_analysis(x, V0, V1, ht, i, V_exact):
-    #duales Problem lösen: A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    M = dual_problem_matrix(ht)
-    J = np.ones(M.shape[1]) * hxs[2]
-    J[0] = 0
-    J[-1] = 0
-    z_h = sparse.linalg.cg(M , J)[0]             #A^T z = (1,1,1,1,1)^T  --CG-->  z_h
-    if i == 10:
-        print('u1:     ', V1)
-        print('sys matrix duales problem:')
-        print('  '+arr2str(M.todense(), prefix='  '))
-        print('z_h:     ', z_h)
-        plt.plot(x, z_h)
-        plt.show()
-    #Diskretisierungsfehler berechnen
-    eta_h = discretization_error(x, z_h, V1, V0, Nx)
-    #Iterationsfehler berechnen
-    eta_m = iteration_error(x, z_h, V1, V0, Nx)
-    #exacten Fehler berechnen
-    eta_exact = 0
-    for i in range(0, Nx):
-        eta_exact += abs(V1[i] - V_exact[i])
-    #print error
-    print('Diskretisierungsfehler: ', eta_h, 'Iterationerror: ', eta_m, 'exact error: ', eta_exact)
+def error_analysis():
+    
 
 #######################
 # time stepping methods
@@ -419,7 +319,7 @@ dt_linear: tuple of 2 functions
              the second function returns the system matrix for the implicit term,
            system matrices will act only on the V-channel
 """
-def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, i, maxit=1000, eps=1e-10):
+def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     # get explicit and implicit system matrix
     cn_sys_expl, cn_sys_impl = sys_expl_impl    #cn_sys_impl = (eye - ht * mass_inv_stiffness)  ; cn_sys_expl = eye     (for implicit euler) 
 
@@ -431,7 +331,7 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, i, maxit=1000, eps=1e-10
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
     V_exact = sparse.linalg.cg(A, rhs, tol=0)[0] 
-    error_analysis(xs, V0, Vmhn0[:,0], ht, i, V_exact)
+    error_analysis()
     return Vmhn0
 
 """
@@ -472,7 +372,7 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
 
     for i in range(n_steps):
         print(i, '/', n_steps, 'timesteps')
-        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
+        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
         if not traj:
             result = Vmhn
         else:
