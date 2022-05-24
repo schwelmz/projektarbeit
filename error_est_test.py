@@ -112,6 +112,15 @@ def calc_disc_error(x, z, Ne, h):
         t2 += -h * (z[ie] + z[ie+1])/2
     return (t1+t2)
 
+def calc_iter_error_exact(u, u_exact, Ne, h):
+    t1 = 0
+    t2 = 0
+    for ie in range(Ne):
+        t1 += (u[ie]+u[ie+1])/2*h
+        t2 += (u_exact[ie]+u_exact[ie+1])/2*h
+    return t2-t1
+
+
 ##########################################################################################
 Nx = 200; Ne = Nx - 1
 #Ne = 20; Nx = Ne + 1
@@ -151,9 +160,7 @@ while iter_error > disc_error:
     #error calculation
     iter_error = calc_iter_error(x, z, u, Ne, h)
     disc_error = calc_disc_error(x, z, Ne, h)
-    iter_error_exact = 0
-    for ix in range(0, Nx):
-        iter_error_exact += abs(u[ix]-u_exact[ix])
+    iter_error_exact = calc_iter_error_exact(u, u_exact, Ne, h)
     #print('iter_error: ', iter_error)
     #print('disc_error: ', disc_error)
     
