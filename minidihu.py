@@ -220,34 +220,6 @@ def make_inv_lumped_mass_matrix(N, hx):
         vals.append(1/lumped_val)
     return sparse.csr_matrix((vals, (rows, cols)), shape=(N,N))
 
-def make_lumped_mass_matrix(N, hx):
-    if hasattr(hx, "__len__"):
-        """
-        0    1    2
-        |----|----|----|--
-        h0   h1   h2
-        """
-        assert(len(hx) == N - 1), f"len(hx) = {len(hx)}, N = {N}"
-        h = lambda i: hx[i]
-    else:
-        h = lambda i: hx
-
-    rows = []
-    cols = []
-    vals = []
-    for i in range(N):
-        lumped_val = 0
-        if i != 0:
-            lumped_val += h(i-1) / 3 # φ_i|_left φ_i|_left
-            lumped_val += h(i-1) / 6 # φ_i|_left φ_i-1|_right
-        if i != N-1:
-            lumped_val += h(i) / 3 # φ_i|_right φ_i|_right
-            lumped_val += h(i) / 6 # φ_i|_right φ_i+1|_left
-        rows.append(i)
-        cols.append(i)
-        vals.append(lumped_val)
-    return sparse.csr_matrix((vals, (rows, cols)), shape=(N,N))
-
 def make_support_matrix(N, hx):
     if hasattr(hx, "__len__"):
         """
@@ -284,15 +256,82 @@ Conductivity = 3.828    # sigma, conductivity [mS/cm]
 Am = 500.0              # surface area to volume ratio [cm^-1]
 Cm = 0.58               # membrane capacitance [uF/cm^2]
 
-#######################
+############################################################################################
 # error analysis
-#######################
-def error_analysis():
-    
+############################################################################################
+def second_order_coefficients(j, u, x):
+    xi = [x[j-1], x[j], x[j+1]]
+    ui = [u[j-1], u[j], u[j+1]]
+    a = ui[0]*xi[1]*xi[2]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*xi[0]*xi[2]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*xi[0]*xi[1]/((xi[2]-xi[0])*(xi[2]-xi[1]))
+    b = -(ui[0]*(xi[1]+xi[2])/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]*(xi[0]+xi[2])/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]*(xi[0]+xi[1])/((xi[2]-xi[0])*(xi[2]-xi[1])))
+    c = ui[0]/((xi[0]-xi[1])*(xi[0]-xi[2]))+ui[1]/((xi[1]-xi[0])*(xi[1]-xi[2]))+ui[2]/((xi[2]-xi[0])*(xi[2]-xi[1]))
+    return [c,b,a]
 
-#######################
+def first_order_coefficients(j, u, x):
+    x = [x[j], x[j+1]]
+    u = [u[j], u[j+1]]
+    c = (u[1]*x[0]-u[0]*x[1])/(x[0]-x[1])
+    m = (u[0]-u[1])/(x[0]-x[1])
+    return [m, c]
+
+def calc_iter_error_exact(u, u_exact, Ne, h):
+    error = 0
+    for ie in range(Ne):
+        t1 = (u[ie]+u[ie+1])/2*h
+        t2 = (u_exact[ie]+u_exact[ie+1])/2*h
+        error += abs(t1-t2)
+    return error
+
+def calc_iter_error(x, u0, u1, z, jumps_u, Ne, ht):
+    error = 0
+    for ie in range(Ne):
+        t2 = 0
+        t3 = 0
+        [a0,b0] = first_order_coefficients(ie, u0, x)
+        [a1,b1] = first_order_coefficients(ie, u1, x)
+        [c,d] = first_order_coefficients(ie, z, x)
+        t1 = (a0-a1)*c*(x[ie+1]-x[ie]) + 1/2*((a0-a1)*d+(b0-b1)*c)*(x[ie+1]**2-x[ie]**2) + 1/3*(b0-b1)*d*(x[ie+1]**3-x[ie]**3)
+        if ie != 0:
+            t2 = prefactor * ht * 0.5 * jumps_u[ie - 1] * z[ie]
+        if ie != Ne - 1:
+            t3 = prefactor * ht * 0.5 * jumps_u[ie] * z[ie+1]
+        error += t1+t2+t3
+    return abs(error)
+
+def calc_disc_error(x, u0, u1, z, Nx):
+    error = 0
+    ix = 1
+    while (ix <= Nx-1):
+        [a2,b2,c2] = second_order_coefficients(ix, z, x)
+        #left side
+        [a0,b0] = first_order_coefficients(ix-1, u0, x)
+        [a1,b1] = first_order_coefficients(ix-1, u1, x)
+        [a3,b3] = first_order_coefficients(ix-1, z, x)
+        t1 = (a0-a1)*(a2-a3)*(x[ix]-x[ix-1]) + 1/2*((a0-a1)*(b2-b3)+(b0-b1)*(a2-a3))*(x[ix]**2-x[ix-1]**2) + 1/3*((a0-a1)*c2+(b0-b1)*(b2-b3))*(x[ix]**3-x[ix-1]**3) + 1/4*(b0-b1)*c2*(x[ix]**4-x[ix-1]**4)
+        #right side
+        [a0,b0] = first_order_coefficients(ix, u0, x)
+        [a1,b1] = first_order_coefficients(ix, u1, x)
+        [a3,b3] = first_order_coefficients(ix, z, x)
+        t2 = (a0-a1)*(a2-a3)*(x[ix+1]-x[ix]) + 1/2*((a0-a1)*(b2-b3)+(b0-b1)*(a2-a3))*(x[ix+1]**2-x[ix]**2) + 1/3*((a0-a1)*c2+(b0-b1)*(b2-b3))*(x[ix+1]**3-x[ix]**3) + 1/4*(b0-b1)*c2*(x[ix+1]**4-x[ix]**4)
+        #update
+        error += t1+t2
+        ix += 2
+    return (abs(error))
+
+def error_analysis(x, u0, u, u_exact, Nx, ht, t_step):
+    if np.array_equal(u0,u) == True:
+        print('Fehler!!!! u0 = u1')
+    #error estimation
+    u_prime = (u[1:] - u[:-1]) / h # on each element
+    jumps_u = u_prime[1:] - u_prime[:-1] # on the inner nodes
+    iter_error = calc_iter_error(x, u0, u, z, jumps_u, Ne, ht)
+    disc_error = calc_disc_error(x, u0, u, z, Nx)
+    #iter_error_exact = calc_iter_error_exact(u, u_exact, Ne, h)
+    print('timestep: ',t_step,'iteration error = ', iter_error, 'discretization error = ', disc_error)#,'exact iteration error = ', iter_error_exact)
+
+############################################################################################
 # time stepping methods
-#######################
+############################################################################################
 def heun_step(Vmhn, rhs, t, ht):
     Vmhn0 = Vmhn + ht * rhs(Vmhn, t)
     Vmhn1 = Vmhn + ht * rhs(Vmhn0, t + ht)
@@ -319,10 +358,11 @@ dt_linear: tuple of 2 functions
              the second function returns the system matrix for the implicit term,
            system matrices will act only on the V-channel
 """
-def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
+def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, t_step, maxit=1000, eps=1e-10):
     # get explicit and implicit system matrix
     cn_sys_expl, cn_sys_impl = sys_expl_impl    #cn_sys_impl = (eye - ht * mass_inv_stiffness)  ; cn_sys_expl = eye     (for implicit euler) 
 
+    V_alt = np.array(Vmhn0)[:,0]
     Vmhn0 = np.array(Vmhn0)
 
     # only act on V channel
@@ -330,8 +370,8 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, maxit=1000, eps=1e-10):
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
-    V_exact = sparse.linalg.cg(A, rhs, tol=0)[0] 
-    error_analysis()
+    V_exact = 0 #V_exact = sparse.linalg.cg(A, rhs, tol=0)[0]
+    error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
     return Vmhn0
 
 """
@@ -371,8 +411,8 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     ht_ = (t1-t0) / n_steps
 
     for i in range(n_steps):
-        print(i, '/', n_steps, 'timesteps')
-        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, **kwargs)
+        #print(i, '/', n_steps, 'timesteps')
+        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
         if not traj:
             result = Vmhn
         else:
@@ -408,14 +448,14 @@ def godunov_step_1H_1CN(Vmhn0, rhs_reaction, system_matrices_expl_impl, t, ht, *
 
     return Vmhn
 
-def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, i, **kwargs):
+def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, t_step, **kwargs):
     # unpack rhs for each component
     rhs_reaction, system_matrices_expl_impl = rhs
 
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, i, **kwargs)
+    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, t_step, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
@@ -609,12 +649,22 @@ if __name__ == '__main__':
     mass_inv_stiffness = mass_inv @ stiffness
     print("Mass^-1 Stiffness")
     print('  '+arr2str(mass_inv_stiffness.todense(), prefix='  '))
-    mass = make_lumped_mass_matrix(Nx, hxs)
-    mass[0,0] = 0
-    mass[-1,-1] = 0
-    print("mass matrix")
-    print('  '+arr2str(mass.todense(), prefix='  '))
 
+    #for error estimation
+    Ne = Nx-1
+    h = (xs[-1] - xs[0])/Ne
+    ht = hts
+    #solve the dual problem
+    mass = sparse.linalg.inv(make_inv_lumped_mass_matrix(Nx-2, hxs[1:-1]))
+    mass[0,0] = 1.5 * h
+    mass[-1,-1] = 1.5 * h
+    lap = -make_laplace(Nx, hxs, bounds = 'neumann')[1:-1,1:-1]
+    lhs = mass + prefactor * ht * lap
+    rhs = np.ones(Nx-2)*h
+    z = sparse.linalg.cg(lhs.T, rhs)
+    assert z[1] == 0; z = z[0]
+    z = np.insert(z, 0, z[0])
+    z = np.insert(z, -1, z[-1])
 
     # system matrices for crank_nicolson
     @lru_cache(maxsize=8)
@@ -637,10 +687,6 @@ if __name__ == '__main__':
 
     def rhs_hodgkin_huxley(Vmhn, t):
         return rhs_hh(Vmhn)
-    
-    def dual_problem_matrix(ht):
-        M = mass + ht * stiffness
-        return M.T
 
     # Solve the equation
 

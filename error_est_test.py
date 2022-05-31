@@ -141,6 +141,10 @@ J = rhs
 #exact solution
 u_exact = -1/2*(x**2-x)
 
+#solve the dual problem
+z = sparse.linalg.gmres(laplace, J)
+assert z[1] == 0; z = z[0]
+
 k = 10
 iter_error = 1
 disc_error = 0
@@ -149,14 +153,9 @@ iter_error_list = []
 disc_error_list = []
 iter_error_exact_list = []
 while iter_error > disc_error:
-    #solve the problem
+    #compute the approximate solution
     u = sparse.linalg.gmres(laplace, rhs, maxiter = k)
-    z = sparse.linalg.gmres(laplace, J)
-    #print('u', u)
-    #assert u[1] == 0; 
     u = u[0]
-    assert z[1] == 0; z = z[0]
-
     #error calculation
     iter_error = calc_iter_error(x, z, u, Ne, h)
     disc_error = calc_disc_error(x, z, Ne, h)
