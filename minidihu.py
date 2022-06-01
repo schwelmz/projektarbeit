@@ -316,7 +316,7 @@ def calc_disc_error(x, u0, u1, z, Nx):
         #update
         error += t1+t2
         ix += 2
-    return (abs(error))
+    return abs(error)
 
 def error_analysis(x, u0, u, u_exact, Nx, ht, t_step):
     if np.array_equal(u0,u) == True:
@@ -328,6 +328,7 @@ def error_analysis(x, u0, u, u_exact, Nx, ht, t_step):
     disc_error = calc_disc_error(x, u0, u, z, Nx)
     #iter_error_exact = calc_iter_error_exact(u, u_exact, Ne, h)
     print('timestep: ',t_step,'iteration error = ', iter_error, 'discretization error = ', disc_error)#,'exact iteration error = ', iter_error_exact)
+    return [disc_error, iter_error]#, iter_error_exact]
 
 ############################################################################################
 # time stepping methods
@@ -371,8 +372,8 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, t_step, maxit=1000, eps=
     rhs = cn_sys_expl(ht)*V0
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
     V_exact = 0 #V_exact = sparse.linalg.cg(A, rhs, tol=0)[0]
-    error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
-    return Vmhn0
+    [disc_error, iter_error] = error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
+    return [Vmhn0,disc_error,iter_error]#,iter_error_exact]
 
 """
 dt_linear: linear rhs function. Is applied to all channels
@@ -410,13 +411,32 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
     n_steps = max(1, int((t1-t0)/ht + 0.5)) # round to nearest integer
     ht_ = (t1-t0) / n_steps
 
+    disc_error_list = []
+    iter_error_list = []
+    iter_error_exact_list = []
+
     for i in range(n_steps):
         #print(i, '/', n_steps, 'timesteps')
-        Vmhn = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
+        [Vmhn, disc_error, iter_error] = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
         if not traj:
             result = Vmhn
         else:
             result.append(Vmhn)
+        disc_error_list.append(disc_error)
+        iter_error_list.append(iter_error)
+        #iter_error_exact_list.append(iter_error_exact)
+
+    #plot
+    disc_error_array = np.array(disc_error_list)
+    iter_error_array = np.array(iter_error_list)
+    #iter_error_exact_array = np.array(iter_error_exact_list)
+    timesteps = np.arange(0, n_steps,1)
+    plt.plot(timesteps, disc_error_array, label='discretization error')
+    plt.plot(timesteps, iter_error_array, label='iteration error')
+    #plt.plot(timesteps, iter_error_exact_array, label='exact iteration error')
+    plt.yscale('log')
+    plt.legend()
+    plt.show()
 
     return np.asarray(result) # cast list to array if we store the trajectory
 
@@ -455,11 +475,11 @@ def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, t_step, **kwargs):
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    Vmhn = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, t_step, **kwargs)
+    [Vmhn, disc_error, iter_error] = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, t_step, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
-    return Vmhn
+    return [Vmhn, disc_error, iter_error]#, iter_error_exact]
 
 def strang_1H_1CN_FE(Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
     return stepper(strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
@@ -611,7 +631,7 @@ if __name__ == '__main__':
         Vmhn0[:,2] =   0.6,
         Vmhn0[:,3] =   0.325,
         # initial acivation
-        Vmhn0[1191//2 - 3 : 1191//2 + 3, 0] = 50
+        Vmhn0[(1191)//2 - 3 : (1191)//2 + 3, 0] = 50
         print("Created fiber")
     Nx = xs.shape[0]
     print(f"  length: {xs[-1]:>5.2f}cm")
