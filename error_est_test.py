@@ -1,3 +1,4 @@
+from tkinter import E
 import numpy as np
 import scipy.sparse as sparse
 import scipy.sparse.linalg
@@ -113,12 +114,12 @@ def calc_disc_error(x, z, Ne, h):
     return (t1+t2)
 
 def calc_iter_error_exact(u, u_exact, Ne, h):
-    t1 = 0
-    t2 = 0
+    error = 0
     for ie in range(Ne):
-        t1 += (u[ie]+u[ie+1])/2*h
-        t2 += (u_exact[ie]+u_exact[ie+1])/2*h
-    return t2-t1
+        t1 = (u_exact[ie]+u_exact[ie+1]-u[ie]-u[ie+1])/2*h
+        #t2 = (u_exact[ie]+u_exact[ie+1])/2*h
+        error += t1
+    return error
 
 
 ##########################################################################################
@@ -154,7 +155,8 @@ disc_error_list = []
 iter_error_exact_list = []
 while iter_error > disc_error:
     #compute the approximate solution
-    u = sparse.linalg.gmres(laplace, rhs, maxiter = k)
+    u = sparse.linalg.cg(laplace, rhs, maxiter = k)
+    print(u[1])
     u = u[0]
     #error calculation
     iter_error = calc_iter_error(x, z, u, Ne, h)
@@ -166,13 +168,15 @@ while iter_error > disc_error:
     iter_error_list.append(iter_error)
     disc_error_list.append(disc_error)
     iter_error_exact_list.append(iter_error_exact)
-    k += 30
+    k += 5
     iters.append(k)
 
 #plot
 iter_error_array = np.array(iter_error_list)
 disc_error_array = np.array(disc_error_list)
 iter_error_exact_array = np.array(iter_error_exact_list)
+print(iter_error_list)
+print(iter_error_exact_list)
 plt.plot(iters, iter_error_array, label = 'estimated iteration error')
 plt.plot(iters, disc_error_array, label = 'estimated discretization error')
 plt.plot(iters, iter_error_exact_array, label = 'exact iteration error')

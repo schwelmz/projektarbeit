@@ -277,9 +277,9 @@ def first_order_coefficients(j, u, x):
 def calc_iter_error_exact(u, u_exact, Ne, h):
     error = 0
     for ie in range(Ne):
-        t1 = (u[ie]+u[ie+1])/2*h
-        t2 = (u_exact[ie]+u_exact[ie+1])/2*h
-        error += abs(t1-t2)
+        t1 = (u[ie]+u[ie+1]-u_exact[ie+1]-u_exact[ie])/2*h
+        #t2 = (u_exact[ie]+u_exact[ie+1])/2*h
+        error += t1
     return error
 
 def calc_iter_error(x, u0, u1, z, jumps_u, Ne, ht):
@@ -326,9 +326,9 @@ def error_analysis(x, u0, u, u_exact, Nx, ht, t_step):
     jumps_u = u_prime[1:] - u_prime[:-1] # on the inner nodes
     iter_error = calc_iter_error(x, u0, u, z, jumps_u, Ne, ht)
     disc_error = calc_disc_error(x, u0, u, z, Nx)
-    #iter_error_exact = calc_iter_error_exact(u, u_exact, Ne, h)
-    print('timestep: ',t_step,'iteration error = ', iter_error, 'discretization error = ', disc_error)#,'exact iteration error = ', iter_error_exact)
-    return [disc_error, iter_error]#, iter_error_exact]
+    iter_error_exact = calc_iter_error_exact(u, u_exact, Ne, h)
+    print('timestep: ',t_step,'iteration error = ', iter_error, 'discretization error = ', disc_error,'exact iteration error = ', iter_error_exact)
+    return [disc_error, iter_error, iter_error_exact]
 
 ############################################################################################
 # time stepping methods
@@ -370,10 +370,37 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, t_step, maxit=1000, eps=
     V0 = Vmhn0[:,0]             #V0
     A = cn_sys_impl(ht)
     rhs = cn_sys_expl(ht)*V0
+    V_exact = sparse.linalg.cg(A, rhs, tol=0)[0]
+    #convergence plot################
+    if (t_step == 100):
+        k = 1
+        iters = []
+        disc_error_list = []
+        iter_error_list = []
+        iter_error_exact_list = []
+        approx_list = []
+        while k<=50:
+            Vmhn0[:,0] = sparse.linalg.gmres(A, rhs, maxiter=k, tol = 0)[0]
+            [disc_error, iter_error, iter_error_exact] = error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
+            iter_error_list.append(iter_error)
+            disc_error_list.append(disc_error)
+            iter_error_exact_list.append(iter_error_exact)
+            iters.append(k)
+            k = k+1
+        iter_error_array = np.array(iter_error_list)
+        disc_error_array = np.array(disc_error_list)
+        iter_error_exact_array = np.array(iter_error_exact_list)
+        plt.plot(iters, iter_error_array, label = 'estimated iteration error')
+        plt.plot(iters, disc_error_array, label = 'estimated discretization error')
+        plt.plot(iters, iter_error_exact_array, label = 'exact iteration error')
+        plt.xlabel('iterations')
+        plt.yscale('log')
+        plt.legend()
+        plt.show()
+    #################################
     Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=maxit, tol=eps)[0]        #V1
-    V_exact = 0 #V_exact = sparse.linalg.cg(A, rhs, tol=0)[0]
-    [disc_error, iter_error] = error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
-    return [Vmhn0,disc_error,iter_error]#,iter_error_exact]
+    [disc_error, iter_error, iter_error_exact] = error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
+    return [Vmhn0,disc_error,iter_error,iter_error_exact]
 
 """
 dt_linear: linear rhs function. Is applied to all channels
@@ -417,23 +444,23 @@ def stepper(integator, Vmhn0, rhs, t0, t1, ht, traj=False, **kwargs):
 
     for i in range(n_steps):
         #print(i, '/', n_steps, 'timesteps')
-        [Vmhn, disc_error, iter_error] = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
+        [Vmhn, disc_error, iter_error, iter_error_exact] = integator(Vmhn, rhs, t0+i*ht_, ht_, i, **kwargs)
         if not traj:
             result = Vmhn
         else:
             result.append(Vmhn)
         disc_error_list.append(disc_error)
         iter_error_list.append(iter_error)
-        #iter_error_exact_list.append(iter_error_exact)
+        iter_error_exact_list.append(iter_error_exact)
 
     #plot
     disc_error_array = np.array(disc_error_list)
     iter_error_array = np.array(iter_error_list)
-    #iter_error_exact_array = np.array(iter_error_exact_list)
+    iter_error_exact_array = np.array(iter_error_exact_list)
     timesteps = np.arange(0, n_steps,1)
     plt.plot(timesteps, disc_error_array, label='discretization error')
     plt.plot(timesteps, iter_error_array, label='iteration error')
-    #plt.plot(timesteps, iter_error_exact_array, label='exact iteration error')
+    plt.plot(timesteps, iter_error_exact_array, label='exact iteration error')
     plt.yscale('log')
     plt.legend()
     plt.show()
@@ -475,11 +502,11 @@ def strang_step_1H_1CN_FE(Vmhn0, rhs, t, ht, t_step, **kwargs):
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn0, rhs_reaction, t, ht/2)
     # 1 interval for diffusion with Crank-Nicolson
-    [Vmhn, disc_error, iter_error] = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, t_step, **kwargs)
+    [Vmhn, disc_error, iter_error, iter_error_exact] = crank_nicolson_FE_step(Vmhn, system_matrices_expl_impl, t, ht, t_step, **kwargs)
     # 1/2 interval for reaction term with Heun
     Vmhn = heun_step(Vmhn, rhs_reaction, t+ht/2, ht/2)
 
-    return [Vmhn, disc_error, iter_error]#, iter_error_exact]
+    return [Vmhn, disc_error, iter_error, iter_error_exact]
 
 def strang_1H_1CN_FE(Vmhn, rhs0, system_matrices_expl_impl, t0, t1, hts, maxit=1000, eps=1e-10, traj=False):
     return stepper(strang_step_1H_1CN_FE, Vmhn, (rhs0, system_matrices_expl_impl), t0, t1, hts, maxit=maxit, eps=eps, traj=traj)
@@ -623,15 +650,15 @@ if __name__ == '__main__':
         xs[1:] = np.cumsum(hxs)
         print("Loaded fiber")
     else:
-        xs = np.linspace(0,11.9, 1191)
+        xs = np.linspace(0,11.9, 1191*2+1)
         hxs = xs[1:] - xs[:-1]
-        Vmhn0 = np.zeros((1191, 4))
+        Vmhn0 = np.zeros((1191*2+1, 4))
         Vmhn0[:,0] = -75.0,
         Vmhn0[:,1] =   0.05,
         Vmhn0[:,2] =   0.6,
         Vmhn0[:,3] =   0.325,
         # initial acivation
-        Vmhn0[(1191)//2 - 3 : (1191)//2 + 3, 0] = 50
+        Vmhn0[(1191*2+1)//2 - 3 : (1191*2+1)//2 + 3, 0] = 50
         print("Created fiber")
     Nx = xs.shape[0]
     print(f"  length: {xs[-1]:>5.2f}cm")
