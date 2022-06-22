@@ -280,7 +280,7 @@ def calc_iter_error_exact(u, u_exact, Ne, h):
         t1 = (u[ie]+u[ie+1]-u_exact[ie+1]-u_exact[ie])/2*h
         #t2 = (u_exact[ie]+u_exact[ie+1])/2*h
         error += t1
-    return error
+    return abs(error)
 
 def calc_iter_error(x, u0, u1, z, jumps_u, Ne, ht):
     error = 0
@@ -372,15 +372,15 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, t_step, maxit=1000, eps=
     rhs = cn_sys_expl(ht)*V0
     V_exact = sparse.linalg.cg(A, rhs, tol=0)[0]
     #convergence plot################
-    if (t_step == 100):
+    if (t_step == 1):
         k = 1
         iters = []
         disc_error_list = []
         iter_error_list = []
         iter_error_exact_list = []
         approx_list = []
-        while k<=50:
-            Vmhn0[:,0] = sparse.linalg.gmres(A, rhs, maxiter=k, tol = 0)[0]
+        while k<=30:
+            Vmhn0[:,0] = sparse.linalg.cg(A, rhs, maxiter=k, tol = 0)[0]
             [disc_error, iter_error, iter_error_exact] = error_analysis(xs, V_alt, Vmhn0[:,0], V_exact, Nx, ht, t_step)
             iter_error_list.append(iter_error)
             disc_error_list.append(disc_error)
@@ -390,8 +390,8 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, t_step, maxit=1000, eps=
         iter_error_array = np.array(iter_error_list)
         disc_error_array = np.array(disc_error_list)
         iter_error_exact_array = np.array(iter_error_exact_list)
-        plt.plot(iters, iter_error_array, label = 'estimated iteration error')
-        plt.plot(iters, disc_error_array, label = 'estimated discretization error')
+        #plt.plot(iters, iter_error_array, label = 'estimated iteration error')
+        #plt.plot(iters, disc_error_array, label = 'estimated discretization error')
         plt.plot(iters, iter_error_exact_array, label = 'exact iteration error')
         plt.xlabel('iterations')
         plt.yscale('log')
@@ -650,15 +650,15 @@ if __name__ == '__main__':
         xs[1:] = np.cumsum(hxs)
         print("Loaded fiber")
     else:
-        xs = np.linspace(0,11.9, 1191*2+1)
+        xs = np.linspace(0,11.9, 1191)
         hxs = xs[1:] - xs[:-1]
-        Vmhn0 = np.zeros((1191*2+1, 4))
+        Vmhn0 = np.zeros((1191, 4))
         Vmhn0[:,0] = -75.0,
         Vmhn0[:,1] =   0.05,
         Vmhn0[:,2] =   0.6,
         Vmhn0[:,3] =   0.325,
         # initial acivation
-        Vmhn0[(1191*2+1)//2 - 3 : (1191*2+1)//2 + 3, 0] = 50
+        Vmhn0[(1191)//2 - 3 : (1191)//2 + 3, 0] = 50
         print("Created fiber")
     Nx = xs.shape[0]
     print(f"  length: {xs[-1]:>5.2f}cm")
