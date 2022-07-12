@@ -6,6 +6,7 @@ import scipy.sparse as sparse
 import scipy.sparse.linalg
 from functools import lru_cache
 import matplotlib.pyplot as plt
+import inspect
 
 ########################
 def extract_channels(file):
@@ -357,7 +358,7 @@ def plot_test(u0, V_exact, lhs, rhs):
     iter_error_list = []
     iter_error_exact_list = []
     k = 1
-    while k <= 30:
+    while k <= 50:
         #Löse das Gleichungssystem mit maxiter = k
         V_approx = sparse.linalg.cg(lhs, rhs, maxiter = k, tol = 0)
         V_approx = V_approx[0]
@@ -382,6 +383,17 @@ def plot_test(u0, V_exact, lhs, rhs):
     plt.legend()
     plt.yscale('log')
     plt.show()
+
+def cg_callback(xk):
+    frame = inspect.currentframe().f_back
+    k = frame.f_locals['iter_']
+    info = frame.f_locals['info']
+    maxiter = frame.f_locals['maxiter']
+    resid = frame.f_locals['resid']
+    atol = frame.f_locals['atol']
+    if resid < atol or k == maxiter:
+        print(k)
+
 """
 Crank-Nicolson step for Finite-Element formulation
 dt_linear: tuple of 2 functions
@@ -401,14 +413,12 @@ def crank_nicolson_FE_step(Vmhn0, sys_expl_impl, t, ht, ti, maxit=1000, eps=1e-1
     V0 = Vmhn0[:,0]             #V0
 
     # convergence plot
-    if ti == 5000:
+    if ti == 50:
         V_exact = sparse.linalg.cg(cn_sys_impl(ht), cn_sys_expl(ht)*V0, tol=0)[0]
         plot_test(V_alt, V_exact, cn_sys_impl(ht), cn_sys_expl(ht)*V0)
     
 
-    Vmhn0[:,0] = sparse.linalg.cg(cn_sys_impl(ht), cn_sys_expl(ht)*V0, maxiter=maxit, tol=eps)[0]        #V1
-
-    error_est(V_alt, Vmhn0[:,0], xs)
+    Vmhn0[:,0] = sparse.linalg.cg(cn_sys_impl(ht), cn_sys_expl(ht)*V0, maxiter=maxit, tol=eps, callback=cg_callback)[0]        #V1
 
     return Vmhn0
 
@@ -630,7 +640,6 @@ if __name__ == '__main__':
         # strang splitting with one step for each component
         ht0 = hts / 2 # first and last step in strang splitting
         ht1 = hts / 1 # central step in strang splitting
-
 
     if initial_value_file != '':
         print('initial values:', initial_value_file)
